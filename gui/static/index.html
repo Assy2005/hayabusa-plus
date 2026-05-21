@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hayabusa — DFIR コンソール</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo">隼</span>
+      <span class="title">Hayabusa <span class="muted" id="ver">…</span></span>
+    </div>
+    <nav>
+      <button data-tab="scan" class="tab active">スキャン</button>
+      <button data-tab="dashboard" class="tab">ダッシュボード</button>
+      <button data-tab="results" class="tab">結果</button>
+      <button data-tab="hunt" class="tab">ハント</button>
+      <button data-tab="rules" class="tab">ルール</button>
+      <button data-tab="about" class="tab">情報</button>
+    </nav>
+    <div class="health" id="health" title="ヘルス状態">●</div>
+  </header>
+
+  <main>
+    <!-- スキャン -->
+    <section id="tab-scan" class="tab-panel active">
+
+      <!-- 上段: 左 (対象) | 右 (設定) — 高さは自動で main の残りを埋める -->
+      <div class="scan-grid">
+        <div class="card scan-col">
+          <div class="step-head">
+            <span class="step-num">1</span>
+            <h2>対象を選ぶ</h2>
+          </div>
+
+          <!-- このパソコンを直接スキャン -->
+          <div id="this-pc-card" class="this-pc">
+            <div class="this-pc-head">
+              <span class="this-pc-icon">🖥️</span>
+              <div class="this-pc-title">このパソコンを検査</div>
+              <span class="muted small" id="this-pc-summary">読込中…</span>
+            </div>
+            <div id="this-pc-status" class="this-pc-status muted small">
+              管理者権限の確認中…
+            </div>
+            <div class="this-pc-actions">
+              <button id="pc-scan-btn" class="primary" disabled>このパソコンをスキャン</button>
+              <button id="pc-import-btn" disabled>EVTX を取り込む</button>
+              <button id="pc-channels-btn" class="ghost-btn small" disabled>チャネル選択…</button>
+            </div>
+          </div>
+
+          <div class="muted small or-divider">— または EVTX ファイルから —</div>
+
+          <div id="drop-zone" class="drop-zone">
+            <div class="drop-icon">↓</div>
+            <div class="drop-title">EVTX をここにドロップ</div>
+            <div class="muted small">または</div>
+            <label class="btn-like">
+              ファイルを選択
+              <input type="file" id="upload-input" accept=".evtx" hidden multiple />
+            </label>
+            <div class="muted small" id="upload-status"></div>
+          </div>
+
+          <div class="panel-head">
+            <h3>ワークスペース</h3>
+            <button id="ws-refresh" class="ghost-btn small" title="再読込">↻</button>
+          </div>
+          <div id="workspace-listing" class="ws-list scroll-y"></div>
+
+          <details class="advanced">
+            <summary>対象タイプの手動切替 (詳細)</summary>
+            <div class="adv-row">
+              <label>対象タイプ
+                <select id="target-type">
+                  <option value="file">単一の EVTX ファイル</option>
+                  <option value="directory">ディレクトリ全体</option>
+                  <option value="live">ライブ解析 (C:\Windows\System32\winevt\Logs)</option>
+                </select>
+              </label>
+              <label class="row inline">
+                <input type="checkbox" id="allow-live" />
+                <span>ライブ解析を許可</span>
+              </label>
+            </div>
+          </details>
+        </div>
+
+        <div class="card scan-col">
+          <div class="step-head">
+            <span class="step-num">2</span>
+            <h2>スキャン設定</h2>
+          </div>
+
+          <div class="preset-row">
+            <button class="preset-btn active" data-preset="standard"
+              title="medium 以上 / 重複除去あり / 推奨設定">
+              <b>標準</b><span class="muted small">medium 以上</span>
+            </button>
+            <button class="preset-btn" data-preset="fast"
+              title="実績のあるルールのみで高速にざっと確認">
+              <b>軽量</b><span class="muted small">実績ルール・高速</span>
+            </button>
+            <button class="preset-btn" data-preset="deep"
+              title="全ルール有効・最小レベル informational・徹底スキャン">
+              <b>徹底</b><span class="muted small">全ルール・情報まで</span>
+            </button>
+            <button class="preset-btn" data-preset="custom"
+              title="詳細オプションを手動で組む">
+              <b>カスタム</b><span class="muted small">手動指定</span>
+            </button>
+          </div>
+
+          <div class="cfg-row">
+            <label>最小レベル
+              <select id="min-level">
+                <option value="informational">informational (情報)</option>
+                <option value="low">low (低)</option>
+                <option value="medium" selected>medium (中)</option>
+                <option value="high">high (高)</option>
+                <option value="critical">critical (重大)</option>
+              </select>
+            </label>
+            <label class="row inline">
+              <input type="checkbox" id="dedupe" checked />
+              <span>重複排除</span>
+            </label>
+          </div>
+
+          <details class="advanced">
+            <summary>詳細オプション</summary>
+            <div class="adv-row">
+              <label class="row inline">
+                <input type="checkbox" id="eid-filter" />
+                <span>EID フィルタ <span class="hint">(高速化 約3x)</span></span>
+              </label>
+              <label class="row inline">
+                <input type="checkbox" id="enable-all" />
+                <span>全ルール有効化 <span class="hint">(FP増)</span></span>
+              </label>
+              <label class="row inline">
+                <input type="checkbox" id="proven-only" />
+                <span>実績ルールのみ</span>
+              </label>
+            </div>
+            <div class="adv-row">
+              <label>含める ATT&amp;CK タグ
+                <input id="include-tags" placeholder="attack.execution, attack.credential_access" />
+              </label>
+              <label>除外するタグ
+                <input id="exclude-tags" placeholder="sysmon" />
+              </label>
+            </div>
+            <div class="adv-row">
+              <label>解析開始日時
+                <input id="ts-start" placeholder='例: "2024-01-01 00:00:00 +09:00"' />
+              </label>
+              <label>解析終了日時
+                <input id="ts-end" placeholder='例: "2024-12-31 23:59:59 +09:00"' />
+              </label>
+            </div>
+          </details>
+
+          <!-- ライブフィード: スキャン中のみ展開、それまではこの位置に潜む -->
+          <div id="live-card" hidden>
+            <div class="step-head">
+              <span class="step-num">▶</span>
+              <h2>進行中 <span class="muted small" id="live-jobid"></span></h2>
+            </div>
+            <div class="metrics compact">
+              <div><span id="m-count">0</span><label>検知</label></div>
+              <div><span id="m-status">待機中</span><label>状態</label></div>
+              <div><span id="m-elapsed">0秒</span><label>経過</label></div>
+            </div>
+            <div id="live-feed" class="feed scroll-y"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 下段固定: 選択 + 実行 -->
+      <div class="run-bar">
+        <div class="selection-bar" id="selection-bar">
+          <div class="muted small">選択中:</div>
+          <div id="selection-label" class="selection-empty">まだ選択されていません</div>
+          <input id="target-path" type="hidden" />
+        </div>
+        <button id="scan-btn" class="primary scan-go" disabled>
+          <span class="scan-go-main">スキャン開始</span>
+          <span class="scan-go-sub" id="scan-summary">先に対象を選んでください</span>
+        </button>
+      </div>
+
+    </section>
+
+    <!-- ダッシュボード -->
+    <section id="tab-dashboard" class="tab-panel">
+      <div class="card">
+        <div class="dash-controls">
+          <label>対象ジョブ
+            <select id="dash-job"><option value="">(全ジョブ)</option></select>
+          </label>
+          <label>時間粒度
+            <select id="dash-bucket">
+              <option value="minute">分</option>
+              <option value="hour" selected>時</option>
+              <option value="day">日</option>
+            </select>
+          </label>
+          <label class="row inline">
+            <input type="checkbox" id="dash-suppressed" /><span>抑制済みも含める</span>
+          </label>
+          <button id="dash-refresh">更新</button>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi"><span class="kpi-v" id="kpi-total">0</span><span class="kpi-l">検知総数</span></div>
+        <div class="kpi"><span class="kpi-v kpi-bad" id="kpi-crit">0</span><span class="kpi-l">Critical + High</span></div>
+        <div class="kpi"><span class="kpi-v" id="kpi-hosts">0</span><span class="kpi-l">影響ホスト数</span></div>
+        <div class="kpi"><span class="kpi-v" id="kpi-rules">0</span><span class="kpi-l">発火ルール種数</span></div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="card">
+          <h2>重要度内訳</h2>
+          <div id="chart-donut" class="chart-host"></div>
+          <div id="donut-legend" class="legend"></div>
+        </div>
+        <div class="card wide">
+          <h2>時系列 <span class="muted small" id="timeline-range"></span></h2>
+          <div id="chart-timeline" class="chart-host"></div>
+          <div class="legend" id="timeline-legend"></div>
+        </div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="card">
+          <h2>多発ルール TOP12</h2>
+          <div id="chart-rules" class="chart-host"></div>
+        </div>
+        <div class="card">
+          <h2>影響ホスト TOP10</h2>
+          <div id="chart-hosts" class="chart-host"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 結果 -->
+    <section id="tab-results" class="tab-panel">
+      <div class="card">
+        <h2>スキャン履歴</h2>
+        <table id="jobs-table">
+          <thead><tr><th>ID</th><th>状態</th><th>開始</th><th>所要時間</th><th>検知数</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card" id="detection-card" hidden>
+        <h2>検知一覧 <span class="muted small" id="detail-jobid"></span></h2>
+        <div class="filters">
+          <input id="filter-text" placeholder="フィルタ文字列 (ルール名・チャネル・コンピュータ名…)" />
+          <select id="filter-level">
+            <option value="">すべてのレベル</option>
+            <option value="critical">critical</option>
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+            <option value="informational">informational</option>
+          </select>
+          <label class="row inline"><input type="checkbox" id="filter-show-suppressed" />
+            <span>抑制済みも表示</span></label>
+          <button id="summary-btn">HTML サマリを開く</button>
+        </div>
+        <table id="detections-table">
+          <thead><tr><th>時刻</th><th>レベル</th><th>ルール</th><th>コンピュータ</th><th>チャネル</th><th>EID</th><th>判定</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div id="detail-wrap" hidden>
+          <div class="detail-head">
+            <div class="detail-title">
+              <span class="lvl" id="dt-level"></span>
+              <span id="dt-title"></span>
+              <span class="muted small" id="dt-meta"></span>
+            </div>
+            <div class="attack-tags" id="dt-attack"></div>
+          </div>
+          <div class="verdict-bar">
+            <span class="muted small">判定:</span>
+            <button id="verdict-tp" class="verdict-btn tp">本物 (TP)</button>
+            <button id="verdict-fp" class="verdict-btn fp">誤検知 (FP)</button>
+            <button id="verdict-clear" class="verdict-btn">未判定に戻す</button>
+            <span id="verdict-status" class="muted small"></span>
+          </div>
+          <div class="verdict-bar">
+            <span class="muted small">抑制:</span>
+            <button id="suppress-host-rule" class="verdict-btn">このホスト×このルールを抑制</button>
+            <button id="suppress-rule" class="verdict-btn">このルール全体を抑制</button>
+            <button id="suppress-host" class="verdict-btn">このホストの全検知を抑制</button>
+            <span id="suppress-status" class="muted small"></span>
+          </div>
+
+          <nav class="subtabs">
+            <button data-sub="overview" class="subtab active">概要</button>
+            <button data-sub="rule" class="subtab">ルール</button>
+            <button data-sub="related" class="subtab">関連検知 <span id="dt-related-cnt" class="muted small"></span></button>
+            <button data-sub="history" class="subtab">同ルール履歴 <span id="dt-hist-cnt" class="muted small"></span></button>
+            <button data-sub="ptree" class="subtab">プロセスツリー</button>
+            <button data-sub="raw" class="subtab">Raw JSON</button>
+          </nav>
+
+          <section id="sub-overview" class="subpanel active">
+            <div class="kv" id="dt-kv"></div>
+            <div id="dt-details-card" hidden>
+              <h3>Details</h3>
+              <div id="dt-details" class="details-block"></div>
+            </div>
+            <div id="dt-extra-card" hidden>
+              <h3>ExtraFieldInfo</h3>
+              <div id="dt-extra" class="details-block"></div>
+            </div>
+          </section>
+
+          <section id="sub-rule" class="subpanel">
+            <div id="dt-rule-empty" class="muted small" hidden>このルールはルール検索に存在しません（カスタム/不明 RuleID）。</div>
+            <div id="dt-rule-card" hidden>
+              <div class="kv">
+                <div><label>タイトル</label><div id="dtr-title"></div></div>
+                <div><label>RuleID</label><div id="dtr-id" class="mono"></div></div>
+                <div><label>レベル</label><div id="dtr-level"></div></div>
+                <div><label>ファイル</label><div id="dtr-file" class="mono"></div></div>
+              </div>
+              <h3>説明</h3>
+              <div id="dtr-desc" class="details-block"></div>
+              <h3>誤検知の例 (falsepositives)</h3>
+              <ul id="dtr-fp" class="bullet"></ul>
+              <h3>参考リンク</h3>
+              <ul id="dtr-refs" class="bullet"></ul>
+              <details>
+                <summary>ルール YAML 全文</summary>
+                <pre id="dtr-yaml" class="detail"></pre>
+              </details>
+            </div>
+          </section>
+
+          <section id="sub-related" class="subpanel">
+            <div class="muted small">同じコンピュータ上で ±5 分以内に発火した他の検知です。</div>
+            <table id="related-table">
+              <thead><tr><th>時刻</th><th>レベル</th><th>ルール</th><th>チャネル</th><th>EID</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </section>
+
+          <section id="sub-history" class="subpanel">
+            <div class="muted small">このルールの他の発火例（過去スキャン全体から）。</div>
+            <table id="history-table">
+              <thead><tr><th>時刻</th><th>レベル</th><th>ホスト</th><th>チャネル</th><th>EID</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </section>
+
+          <section id="sub-ptree" class="subpanel">
+            <div class="ptree-head">
+              <span class="muted small">同じホスト上で ±<select id="ptree-window">
+                <option value="5">5</option>
+                <option value="10" selected>10</option>
+                <option value="30">30</option>
+                <option value="60">60</option>
+              </select> 分以内の Sysmon EID 1 (Process Create) を親子関係で再構築します。</span>
+              <span class="muted small" id="ptree-summary"></span>
+            </div>
+            <div id="ptree-host" class="ptree-host scroll-y"></div>
+          </section>
+
+          <section id="sub-raw" class="subpanel">
+            <pre id="detail-pane" class="detail"></pre>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- ハント -->
+    <section id="tab-hunt" class="tab-panel">
+      <div class="hunt-grid">
+        <!-- 左: 検索フォーム + プリセット -->
+        <div class="card hunt-form">
+          <div class="step-head">
+            <span class="step-num">⌕</span>
+            <h2>仮説駆動ハンティング</h2>
+          </div>
+
+          <h3>クイックプリセット</h3>
+          <div class="preset-row hunt-presets">
+            <button class="preset-btn" data-hunt="recent_crit"
+              title="過去 24 時間に発火した critical / high 全件">
+              <b>直近 24h の重大</b><span class="muted small">crit + high</span>
+            </button>
+            <button class="preset-btn" data-hunt="anti_forensic"
+              title="ログクリア / 監査ポリシ変更 / VSS 削除 などの痕跡隠蔽行為">
+              <b>痕跡隠蔽行為</b><span class="muted small">T1070 / T1490 / T1562</span>
+            </button>
+            <button class="preset-btn" data-hunt="lsass"
+              title="LSASS / 認証情報ダンプ系">
+              <b>認証情報窃取</b><span class="muted small">T1003 系</span>
+            </button>
+            <button class="preset-btn" data-hunt="persistence"
+              title="サービス作成 / WMI 永続化 / Run キー">
+              <b>永続化</b><span class="muted small">T1543/T1546/T1547</span>
+            </button>
+            <button class="preset-btn" data-hunt="cross_host"
+              title="複数ホストで同じルールが発火しているもの (横展開のシグナル)">
+              <b>横展開兆候</b><span class="muted small">同ルール × 2 ホスト以上</span>
+            </button>
+            <button class="preset-btn" data-hunt="noisy"
+              title="このコーパスで最も騒がしいルール">
+              <b>最多発火</b><span class="muted small">ルール TOP</span>
+            </button>
+          </div>
+
+          <h3>条件</h3>
+          <label>ホスト名 <span class="hint">(<code>*</code> <code>?</code> 使用可)</span>
+            <input id="hunt-host" placeholder="例: WS-* / LAPTOP-?GE8*" />
+          </label>
+          <label>時間範囲
+            <select id="hunt-window">
+              <option value="">指定なし (全期間)</option>
+              <option value="1h">直近 1 時間</option>
+              <option value="24h">直近 24 時間</option>
+              <option value="7d">直近 7 日</option>
+              <option value="30d">直近 30 日</option>
+              <option value="custom">カスタム…</option>
+            </select>
+          </label>
+          <div id="hunt-custom-range" hidden>
+            <label>開始 (ISO)<input id="hunt-from" placeholder="2025-01-01T00:00:00Z" /></label>
+            <label>終了 (ISO)<input id="hunt-to"   placeholder="2025-12-31T23:59:59Z" /></label>
+          </div>
+
+          <label>レベル (複数選択可)
+            <div id="hunt-levels" class="chip-group"></div>
+          </label>
+
+          <label>チャネル
+            <select id="hunt-channel"><option value="">(指定なし)</option></select>
+          </label>
+          <label>EventID
+            <input id="hunt-eid" placeholder="例: 4624 / 7045" />
+          </label>
+          <label>自由文字列 <span class="hint">(ルール名・コンピュータ・raw JSON 全文)</span>
+            <input id="hunt-q" placeholder="例: lsass / comsvcs / wmic" />
+          </label>
+          <label>判定状態
+            <select id="hunt-verdict">
+              <option value="">すべて</option>
+              <option value="tp">本物 (TP)</option>
+              <option value="fp">誤検知 (FP)</option>
+              <option value="unverdicted">未判定</option>
+            </select>
+          </label>
+          <label class="row inline">
+            <input type="checkbox" id="hunt-include-suppressed" />
+            <span>抑制済みも含める</span>
+          </label>
+
+          <div class="hunt-actions">
+            <button id="hunt-run" class="primary">検索</button>
+            <button id="hunt-reset" class="ghost-btn small">リセット</button>
+            <button id="hunt-save" class="ghost-btn small">この検索を保存</button>
+            <button id="hunt-export" class="ghost-btn small">CSV 出力</button>
+          </div>
+
+          <h3>保存済みクエリ</h3>
+          <div id="hunt-saved" class="muted small">(まだありません)</div>
+        </div>
+
+        <!-- 右: 結果 + ピボット -->
+        <div class="card hunt-result">
+          <div class="hunt-result-head">
+            <div>
+              <span id="hunt-total" class="hunt-total">—</span>
+              <span class="muted small" id="hunt-summary"></span>
+            </div>
+            <div class="hunt-tabs">
+              <button class="hunt-tab active" data-view="list">一覧</button>
+              <button class="hunt-tab" data-view="by_rule">ルール別</button>
+              <button class="hunt-tab" data-view="by_host">ホスト別</button>
+              <button class="hunt-tab" data-view="by_hour">時系列</button>
+              <button class="hunt-tab" data-view="by_level">重要度別</button>
+            </div>
+          </div>
+          <div id="hunt-view" class="hunt-view scroll-y"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ルール -->
+    <section id="tab-rules" class="tab-panel">
+      <div class="card">
+        <h2>読み込まれているルールセット</h2>
+        <div id="rules-summary" class="muted">…</div>
+        <h3>レベル別</h3>
+        <div id="rules-levels" class="chips"></div>
+        <h3>カテゴリ別 (上位)</h3>
+        <div id="rules-cats" class="chips"></div>
+      </div>
+      <div class="card">
+        <h2>ルール別 TP / FP フィードバック</h2>
+        <div class="muted small">アナリストが付けた判定を集計したものです。
+          結果は <code>lookups/fp_history/&lt;rule_id&gt;.json</code> として書き出され、
+          将来の検知スコア計算 (ARCHITECTURE.md §12) で参照されます。</div>
+        <table id="feedback-table">
+          <thead><tr><th>ルール</th><th>RuleID</th><th>TP</th><th>FP</th><th>FP率</th><th>最終更新</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>Lookup テーブル</h2>
+        <div class="muted small">
+          <code>lookup:</code> 拡張で参照される外部リスト（IOC、ハッシュ
+          許可リストなど）。各ファイルは <code>lookups/</code> 配下に
+          置いてください。エントリ数が 0 のものは編集が必要です。
+        </div>
+        <table id="lookups-table">
+          <thead><tr><th>名前</th><th>ファイル</th><th>エントリ数</th><th>参照ルール</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>抑制ルール一覧</h2>
+        <div class="muted small">抑制は検知を <em>削除せず</em> 結果から非表示にするだけです。
+          内容は <code>suppressions/&lt;host&gt;.json</code> や <code>suppressions/global.json</code>
+          にスナップショットとして自動エクスポートされ、Git でバージョン管理できます。
+          スコープが <code>host</code> や <code>rule+host</code> の場合、コンピュータ名にはワイルドカード
+          (<code>*</code>, <code>?</code>) が使えます。</div>
+        <table id="suppressions-table">
+          <thead><tr><th>ID</th><th>範囲</th><th>RuleID</th><th>対象ホスト</th><th>理由</th><th>登録日時</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 情報 -->
+    <section id="tab-about" class="tab-panel">
+      <div class="card">
+        <h2>このコンソールについて</h2>
+        <p>Hayabusa DFIR スキャナの localhost 用 GUI です。同梱の Hayabusa
+          CLI を薄くラップした制御プレーンとして動作します。EVTX のパース
+          と Sigma マッチングはすべて上流のバイナリに委譲しています。
+          詳細な検知基盤の設計は <code>ARCHITECTURE.md</code> を参照して
+          ください。</p>
+        <p class="muted">このコンソールは単一ユーザー・localhost 限定の
+          利用を前提としています。認証はありません。待ち受けポートを
+          ホスト外に公開しないでください。</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- チャネル選択モーダル: 「このパソコン」スキャン時のチャネル絞り込み
+       Visibility is toggled by adding/removing the `is-hidden` class
+       (see .modal.is-hidden in style.css). We deliberately do NOT use
+       the [hidden] attribute because CSS specificity battles between
+       UA `[hidden]{display:none}` and our `.modal{display:flex}` make
+       it unreliable across browsers. -->
+  <div id="channels-modal" class="modal is-hidden"
+       onclick="if(event.target===this)this.classList.add('is-hidden')">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>スキャン対象チャネル</h2>
+        <button id="channels-close" class="ghost-btn small"
+                onclick="document.getElementById('channels-modal').classList.add('is-hidden')"
+                title="閉じる (Esc)">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="muted small">
+          ここで選んだチャネルだけがスキャンされます。デフォルトは DFIR 重要度の高い
+          チャネルです。サイズが大きく不要そうなものは外すとスキャンが速くなります。
+        </div>
+        <div class="modal-actions-inline">
+          <button id="ch-select-priority">重要なものだけ</button>
+          <button id="ch-select-all">全部</button>
+          <button id="ch-select-none">なし</button>
+        </div>
+        <div id="channels-list" class="channels-list scroll-y"></div>
+      </div>
+      <div class="modal-foot">
+        <span id="channels-summary" class="muted small"></span>
+        <button id="channels-confirm" class="primary">この選択でスキャン</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/charts.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

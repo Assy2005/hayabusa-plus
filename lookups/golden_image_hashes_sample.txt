@@ -1,0 +1,7 @@
+# Golden-image SHA-256 allowlist (sample / demo).
+# In production this is populated from your fleet baseline image's
+# Sysmon EID 6/7 hash inventory, refreshed at every OS upgrade.
+
+# Dummy entries — for demo only.
+aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899
+1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff

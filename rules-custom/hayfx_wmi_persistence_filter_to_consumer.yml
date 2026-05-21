@@ -1,0 +1,68 @@
+title: WMI persistence — filter-to-consumer binding sequence
+id: wmi-persistence-filter-to-consumer
+status: experimental    # depends on hayfx `correlate:` extension
+description: |
+  WMI persistence requires three primitives bound together: a __EventFilter
+  (the trigger), a __EventConsumer (the action) and a
+  __FilterToConsumerBinding (the glue). The signal of intent is not any
+  single creation event but the BINDING event arriving within seconds of
+  one of the others on the same host. Looking at the binding alone yields
+  too many FPs from inventory tools; correlating the sequence collapses
+  that.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1546/003/
+  - https://www.fireeye.com/blog/threat-research/2019/08/wmi-event-subscription-malicious-purposes.html
+logsource:
+  product: windows
+  service: wmi-activity
+correlate:
+  window: 5m
+  by: [Computer]
+  steps:
+    - id: filter_or_consumer_created
+      detection:
+        selection:
+          Channel: 'Microsoft-Windows-WMI-Activity/Operational'
+          EventID:
+            - 5860     # __EventFilter created
+            - 5859     # __EventConsumer created
+        condition: selection
+    - id: binding_registered
+      detection:
+        selection:
+          Channel: 'Microsoft-Windows-WMI-Activity/Operational'
+          EventID: 5861    # __FilterToConsumerBinding established
+        # The consumer-type tokens below are what separates "SCCM client
+        # registering" (which uses CommandLineEventConsumer pointing at
+        # ccmexec.exe) from generic malicious cases.
+        filter_known_admin_tools:
+          Message|contains:
+            - 'ConfigMgr'
+            - 'ccmexec.exe'
+            - 'CarbonBlack'
+            - 'CrowdStrike'
+        condition: selection and not filter_known_admin_tools
+  sequence: [filter_or_consumer_created, binding_registered]
+falsepositives:
+  - Endpoint management agents (SCCM, CrowdStrike) registering their own
+    consumers. The filter_known_admin_tools selector excludes the
+    common cases; extend with your fleet's tools.
+level: high
+tags:
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1546.003
+score:
+  base: 85
+  modifiers:
+    - if: corroborated_within(60s, ['proc_powershell_encoded']) then +10
+evasion: medium
+notes: |
+  Bypass cost (attacker): MEDIUM.
+  - Direct DCOM / WMI from a remote host avoids local WMI-Activity entirely
+    when the consumer is hosted remotely. Mitigated only by correlating
+    cross-host (out of scope for offline single-host analysis).
+  - Naming the binding after a known vendor token defeats the filter; we
+    accept that and rely on §11 review of all surviving alerts.

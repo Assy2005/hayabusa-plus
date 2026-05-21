@@ -1,0 +1,65 @@
+title: Anti-forensics — event log cleared shortly after audit policy change
+id: anti-forensics-clear-then-change
+status: experimental    # depends on hayfx `correlate:` extension
+description: |
+  Either event in isolation is noisy: 1102 (Security log cleared) and 4719
+  (audit policy changed) both have admin-grade legitimate uses. The
+  sequence "policy change → log clear within W" is not. This is the
+  reverse of the usual "noisy then quiet" detection — we look for the
+  forensic operator's footprint, where the attacker first weakens
+  logging and then erases what they did.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1070/001/
+  - https://attack.mitre.org/techniques/T1562/002/
+logsource:
+  product: windows
+  service: security
+correlate:
+  window: 10m
+  by: [Computer]
+  steps:
+    - id: audit_policy_changed
+      detection:
+        selection:
+          Channel: 'Security'
+          EventID: 4719
+        # Filter out the common "Domain Policy applied at boot" pattern by
+        # excluding events whose SubjectUserName is a machine account.
+        filter_machine_subject:
+          SubjectUserName|endswith: '$'
+        condition: selection and not filter_machine_subject
+    - id: log_cleared
+      detection:
+        selection_a:
+          Channel: 'Security'
+          EventID: 1102
+        selection_b:
+          Channel: 'System'
+          EventID: 104
+        condition: selection_a or selection_b
+  sequence: [audit_policy_changed, log_cleared]
+falsepositives:
+  - Admin doing legitimate hardening followed by a routine log archive.
+    Very rare in practice; if it occurs, allow the admin's User SID via a
+    suppression entry rather than weakening the rule.
+level: critical
+tags:
+  - attack.defense_evasion
+  - attack.t1070.001
+  - attack.t1562.002
+score:
+  base: 92
+  modifiers:
+    - if: corroborated_within(30m, ['rdp_logon_from_unusual_ip']) then +5
+evasion: high
+notes: |
+  Bypass cost (attacker): HIGH for full silence.
+  - Disabling the Event Log service before clearing avoids 1102 entirely
+    but generates 7036 (service stopped) and 7035 (service control sent)
+    in System log. Add a sibling rule that treats EventLog service stop
+    as equivalent to a clear.
+  - Clearing the log without changing audit policy first is much more
+    common in benign workflows (DC promotion, OS upgrade) — that's
+    explicitly why we require the sequence.

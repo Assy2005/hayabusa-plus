@@ -1,0 +1,1767 @@
+/* Hayabusa GUI frontend — vanilla JS SPA. */
+console.log("[app] app.js v2026-05-21-c executing");
+(() => {
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+  const fmtTime = (ts) => ts ? new Date(ts * 1000).toLocaleString("ja-JP") : "—";
+  const fmtDur = (a, b) => {
+    if (!a) return "—";
+    const end = b || Date.now() / 1000;
+    const s = Math.max(0, Math.round(end - a));
+    if (s < 60) return s + "秒";
+    if (s < 3600) return Math.floor(s / 60) + "分 " + (s % 60) + "秒";
+    return Math.floor(s / 3600) + "時間 " + Math.floor((s % 3600) / 60) + "分";
+  };
+  // バックエンドの英語ステータスを日本語表示に置き換える。
+  const STATUS_JA = {
+    queued: "待機中", running: "実行中", done: "完了",
+    failed: "失敗", cancelled: "キャンセル", idle: "待機中",
+  };
+  const localizeStatus = (s) => STATUS_JA[s] || s;
+
+  // -------- tabs --------
+  $$(".tab").forEach(t => t.onclick = () => {
+    $$(".tab").forEach(x => x.classList.toggle("active", x === t));
+    const id = "tab-" + t.dataset.tab;
+    $$(".tab-panel").forEach(p => p.classList.toggle("active", p.id === id));
+    if (t.dataset.tab === "results") refreshJobs();
+    if (t.dataset.tab === "rules") { loadRules(); loadFeedback(); loadSuppressions(); loadLookups(); }
+    if (t.dataset.tab === "dashboard") loadDashboard();
+    if (t.dataset.tab === "hunt") initHunt();
+  });
+
+  // -------- health --------
+  async function health() {
+    try {
+      const r = await fetch("/api/health");
+      const d = await r.json();
+      $("#ver").textContent = (d.version || "").replace(/^Hayabusa\s*/, "");
+      $("#health").classList.add("ok");
+      $("#health").title = "Hayabusa 正常\n" + d.hayabusa;
+    } catch (e) {
+      $("#health").classList.add("bad");
+      $("#health").title = "Hayabusa との通信に失敗しました";
+    }
+  }
+
+  // -------- workspace listing (clickable cards) --------
+  const fmtSize = (n) => {
+    if (n == null) return "";
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KiB";
+    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MiB";
+    return (n / 1024 / 1024 / 1024).toFixed(2) + " GiB";
+  };
+
+  async function refreshWorkspace() {
+    try {
+      const r = await fetch("/api/workspace");
+      const d = await r.json();
+      const root = $("#workspace-listing");
+      root.innerHTML = "";
+      const items = (d.uploads || []).concat(d.results || []);
+      // Filter to .evtx and directories — those are the only valid scan
+      // targets, and showing analysis output as a "scannable file" is
+      // misleading.
+      const usable = items.filter(it =>
+        it.type === "dir" || /\.evtx$/i.test(it.name));
+      if (!usable.length) {
+        root.innerHTML = `<div class="ws-empty">
+          まだ EVTX がありません。<br/>
+          上のドロップゾーンにファイルを投げ込むと、ここに現れます。
+        </div>`;
+        return;
+      }
+      // Directories first, then files; alphabetical within each.
+      usable.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name)
+                              : (a.type === "dir" ? -1 : 1)));
+      const selected = $("#target-path").value;
+      usable.forEach(it => {
+        const card = document.createElement("div");
+        card.className = "ws-item" + (it.rel === selected ? " selected" : "");
+        const dirMark = it.type === "dir" ? `<span class="dir-mark">▸</span>` : "";
+        card.innerHTML = `
+          <div class="name" title="${it.rel}">${dirMark}${it.name}${it.type === "dir" ? "/" : ""}</div>
+          <div class="size">${it.type === "dir" ? "—" : fmtSize(it.size)}</div>
+          <div class="kind">${it.type === "dir" ? "DIR" : "EVTX"}</div>`;
+        card.onclick = () => selectTarget(it);
+        root.appendChild(card);
+      });
+    } catch (e) { /* ignore */ }
+  }
+
+  // -------- "このパソコン" カード --------
+  // We hold the latest /api/system/info response so the modal can reuse it
+  // without a second fetch. Refresh is cheap so we re-pull on each open.
+  let systemInfo = null;
+  // Channels currently selected for live scan. Empty = "all readable".
+  let selectedChannels = [];
+
+  async function loadSystemInfo() {
+    try {
+      const r = await fetch("/api/system/info", { cache: "no-store" });
+      systemInfo = await r.json();
+      console.log("[app] system info: " + (systemInfo.channels?.length || 0)
+        + " channels, admin=" + systemInfo.admin);
+    } catch (e) {
+      systemInfo = null;
+      console.error("[app] loadSystemInfo failed:", e);
+    }
+    renderThisPc();
+    // Pre-render the modal contents so opening the modal is purely a
+    // visibility toggle — no async, no race conditions, no chance for the
+    // user to see an empty list.
+    renderChannelsList();
+  }
+
+  // Detached from openChannelsModal so we can call it eagerly at boot.
+  // The modal stays hidden; only its INNER content is populated.
+  function renderChannelsList() {
+    const host = document.querySelector("#channels-list");
+    if (!host) {
+      console.error("[channels] #channels-list element missing");
+      return;
+    }
+    host.innerHTML = "";
+    if (!systemInfo) {
+      host.innerHTML = `<div class="muted small" style="padding:14px">
+        <strong>システム情報の取得に失敗しました。</strong><br/>
+        サーバ <code>/api/system/info</code> が応答していません。
+      </div>`;
+      return;
+    }
+    if (systemInfo.platform !== "win32") {
+      host.innerHTML = `<div class="muted small" style="padding:14px">
+        Windows 上でのみ動作します (現在: ${escapeHtml(String(systemInfo.platform))})。
+      </div>`;
+      return;
+    }
+    if (!Array.isArray(systemInfo.channels) || systemInfo.channels.length === 0) {
+      host.innerHTML = `<div class="muted small" style="padding:14px">
+        EVTX チャネルが見つかりません: <code>${escapeHtml(String(systemInfo.evtx_root || ""))}</code>
+      </div>`;
+      return;
+    }
+    const sorted = [...systemInfo.channels].sort((a, b) => {
+      const pa = a.priority ? 1 : 0, pb = b.priority ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      const ra = a.readable ? 1 : 0, rb = b.readable ? 1 : 0;
+      if (ra !== rb) return rb - ra;
+      return (b.size || 0) - (a.size || 0);
+    });
+    try {
+      const frag = document.createDocumentFragment();
+      sorted.forEach(c => {
+        const row = document.createElement("div");
+        row.className = "row" + (c.priority ? " priority" : "")
+          + (c.readable ? "" : " unreadable");
+        const checked = c.priority && c.readable;
+        row.innerHTML = `
+          <input type="checkbox" data-name="${escapeHtml(c.name)}" ${checked ? "checked" : ""}
+                 ${c.readable ? "" : "disabled"} />
+          <div class="name" title="${escapeHtml(c.name)}">${escapeHtml(c.channel || c.name)}</div>
+          <div class="size">${c.size != null ? fmtSize(c.size) : "—"}</div>
+          <div class="badge">${c.priority ? "PRIORITY" : (c.readable ? "" : "DENIED")}</div>`;
+        frag.appendChild(row);
+      });
+      host.appendChild(frag);
+      console.log("[channels] pre-rendered " + sorted.length + " rows");
+    } catch (e) {
+      console.error("[channels] render failed:", e);
+      host.innerHTML = `<div class="muted small" style="padding:14px;color:#ef5350">
+        描画エラー: <code>${escapeHtml(String(e))}</code></div>`;
+    }
+  }
+
+  function renderThisPc() {
+    const summary = $("#this-pc-summary");
+    const status = $("#this-pc-status");
+    const btnScan = $("#pc-scan-btn");
+    const btnImport = $("#pc-import-btn");
+    const btnCh = $("#pc-channels-btn");
+    if (!systemInfo) {
+      summary.textContent = "情報取得に失敗";
+      status.textContent = "/api/system/info が応答していません。";
+      [btnScan, btnImport, btnCh].forEach(b => b.disabled = true);
+      return;
+    }
+    if (systemInfo.platform !== "win32") {
+      summary.textContent = systemInfo.platform;
+      status.textContent = "この機能は Windows でのみ動作します。";
+      [btnScan, btnImport, btnCh].forEach(b => b.disabled = true);
+      return;
+    }
+    const total = systemInfo.total_size || 0;
+    const readable = systemInfo.channels.filter(c => c.readable).length;
+    const unread = systemInfo.unreadable_count;
+    summary.textContent = `${systemInfo.channels.length} チャネル / 読取可 ${readable}`;
+    if (systemInfo.admin) {
+      status.className = "this-pc-status ok";
+      status.innerHTML = `✓ 管理者権限あり &nbsp; ・ &nbsp; 読み取り可能ログ: ${fmtSize(total)}`
+        + (unread ? `<span class="muted small"> (${unread} 件 アクセス不可)</span>` : "");
+    } else {
+      status.className = "this-pc-status warn";
+      status.innerHTML = `⚠ サーバプロセスが管理者権限で動いていません。 <span class="muted small">`
+        + `PowerShell を「管理者として実行」で開き直して <code>.\\start.ps1</code> を起動してください。`
+        + `現状でも Application / PowerShell 等の一部チャネルは読めるので、`
+        + `そのままスキャンしても部分的な結果は得られます。</span>`;
+    }
+    // We keep all three buttons clickable regardless of admin status —
+    // Hayabusa itself returns a clean error when it can't read a file,
+    // and disabling buttons silently leaves users wondering why nothing
+    // happens. The buttons surface real failures faster than guessing
+    // ahead of time.
+    [btnScan, btnImport, btnCh].forEach(b => b.disabled = false);
+  }
+
+  // --- buttons ---
+  $("#pc-scan-btn").onclick = async () => {
+    // One-click live scan: set the form fields, update the visible
+    // selection summary, then immediately kick off the same scan flow
+    // that the main run-button uses. Skipping the extra click matches
+    // the user's mental model ("I pressed scan, scan something").
+    $("#target-type").value = "live";
+    $("#allow-live").checked = true;
+    $("#target-path").value = "";
+    const label = $("#selection-label");
+    label.textContent = "ライブ解析 (このパソコン)";
+    label.classList.remove("selection-empty");
+    refreshWorkspace();
+    updateScanButton();
+    // Programmatically invoke the main scan button. Going through
+    // .click() keeps a single source of truth for the scan path
+    // (validation, summary update, live-feed binding all live there).
+    if (!$("#scan-btn").disabled) {
+      $("#scan-btn").click();
+    } else {
+      alert("スキャン開始ボタンが無効です。コンソール (F12) のエラーを確認してください。");
+    }
+  };
+
+  $("#pc-import-btn").onclick = async () => {
+    // Default import = priority channels with readable=true.
+    const names = (systemInfo?.channels || [])
+      .filter(c => c.priority && c.readable)
+      .map(c => c.name);
+    if (!names.length) {
+      alert("読み取り可能な優先チャネルがありません。管理者権限で再起動してください。");
+      return;
+    }
+    if (!confirm(`${names.length} 個のチャネル(優先のみ)を workspace/uploads/system-snapshot/ にコピーします。よろしいですか?`)) return;
+    const btn = $("#pc-import-btn");
+    btn.disabled = true;
+    btn.textContent = "コピー中…";
+    try {
+      const r = await fetch("/api/system/import", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({channels: names}),
+      });
+      const d = await r.json();
+      if (d.error) { alert("エラー: " + d.error); return; }
+      const errMsg = d.errors.length ? `\n失敗: ${d.errors.length} 件` : "";
+      alert(`${d.saved.length} 個のファイルを取り込みました → ${d.snapshot_dir}/${errMsg}`);
+      refreshWorkspace();
+    } catch (e) {
+      alert("通信エラー: " + e);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "EVTX を取り込む";
+    }
+  };
+
+  // --- channel picker modal ---
+  // Open is JS-side because it has to populate / refresh content.
+  $("#pc-channels-btn").onclick = () => openChannelsModal();
+  // Close handlers are EXCLUSIVELY in HTML inline onclick (see index.html).
+  // We deliberately do NOT register a JS-side handler for #channels-close
+  // because `.onclick = ...` would overwrite the inline attribute, and any
+  // hiccup in the JS arrow function would silently dead-end the close.
+  // Escape key handling is the one JS-side close we keep — there is no
+  // sensible inline equivalent.
+  document.addEventListener("keydown", (e) => {
+    const modal = $("#channels-modal");
+    if (e.key === "Escape" && modal && !modal.classList.contains("is-hidden")) {
+      modal.classList.add("is-hidden");
+    }
+  });
+  $("#ch-select-priority").onclick = () => setChannelSelection(c => c.priority && c.readable);
+  $("#ch-select-all").onclick = () => setChannelSelection(c => c.readable);
+  $("#ch-select-none").onclick = () => setChannelSelection(() => false);
+
+  // We attach the change listener exactly once at boot; the rows that
+  // come and go inside #channels-list are caught via event delegation.
+  $("#channels-list").addEventListener("change", updateChannelsSummary);
+
+  function openChannelsModal() {
+    // Contents are pre-rendered at boot inside loadSystemInfo →
+    // renderChannelsList. Opening is now a pure DOM toggle — no async, no
+    // race conditions, no chance of an empty list.
+    console.log("[channels] open modal");
+    // If the list is still empty (loadSystemInfo never completed), kick
+    // off a synchronous re-render based on the current cached state. The
+    // user will see whatever the latest fetch produced.
+    const host = document.querySelector("#channels-list");
+    if (host && host.children.length === 0) {
+      renderChannelsList();
+    }
+    $("#channels-modal").classList.remove("is-hidden");
+    updateChannelsSummary();
+  }
+  function setChannelSelection(pred) {
+    document.querySelectorAll("#channels-list input[type=checkbox]").forEach(cb => {
+      cb.checked = !cb.disabled && pred({
+        name: cb.dataset.name,
+        priority: cb.closest(".row").classList.contains("priority"),
+        readable: !cb.disabled,
+      });
+    });
+    updateChannelsSummary();
+  }
+  function getCheckedChannels() {
+    return Array.from(document.querySelectorAll("#channels-list input[type=checkbox]:checked"))
+      .map(cb => cb.dataset.name);
+  }
+  function updateChannelsSummary() {
+    const names = getCheckedChannels();
+    let bytes = 0;
+    const byName = new Map((systemInfo?.channels || []).map(c => [c.name, c]));
+    names.forEach(n => bytes += byName.get(n)?.size || 0);
+    $("#channels-summary").textContent =
+      `${names.length} 個選択中 (計 ${fmtSize(bytes)})`;
+  }
+  $("#channels-confirm").onclick = async () => {
+    const names = getCheckedChannels();
+    if (!names.length) { alert("少なくとも 1 つのチャネルを選んでください"); return; }
+    $("#channels-modal").classList.add("is-hidden");
+    // Import the selected channels into workspace and then point the
+    // target there. This lets us use directory-mode scan (no admin
+    // needed after the import) and lets the user re-scan the same
+    // snapshot multiple times.
+    const btn = $("#channels-confirm");
+    btn.disabled = true; btn.textContent = "取込中…";
+    try {
+      const r = await fetch("/api/system/import", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({channels: names}),
+      });
+      const d = await r.json();
+      if (d.error) { alert("エラー: " + d.error); return; }
+      // Point the scan target at the snapshot dir.
+      $("#target-type").value = "directory";
+      $("#allow-live").checked = false;
+      $("#target-path").value = d.snapshot_dir;
+      const label = $("#selection-label");
+      label.textContent = `${d.snapshot_dir}/  (${d.saved.length} ファイル、計 ${fmtSize(d.saved.reduce((s,x)=>s+x.size,0))})`;
+      label.classList.remove("selection-empty");
+      updateScanButton();
+      refreshWorkspace();
+    } finally {
+      btn.disabled = false; btn.textContent = "この選択でスキャン";
+    }
+  };
+
+  // -------- target selection --------
+  function selectTarget(item) {
+    $("#target-path").value = item.rel;
+    $("#target-type").value = item.type === "dir" ? "directory" : "file";
+    const label = $("#selection-label");
+    label.textContent = item.rel + (item.type === "dir"
+      ? "  (ディレクトリ)"
+      : "  (" + fmtSize(item.size) + ")");
+    label.classList.remove("selection-empty");
+    refreshWorkspace();      // re-highlights the selected card
+    updateScanButton();
+  }
+
+  // -------- upload (with drag-and-drop) --------
+  const dropZone = $("#drop-zone");
+  const uploadInput = $("#upload-input");
+
+  // Clicking the drop zone is a sensible alternative to picking the
+  // file input directly — it's a noticeably larger hit target.
+  dropZone.addEventListener("click", (e) => {
+    if (e.target.closest("label,input")) return;  // don't double-trigger
+    uploadInput.click();
+  });
+  ["dragenter", "dragover"].forEach(evt =>
+    dropZone.addEventListener(evt, e => {
+      e.preventDefault(); e.stopPropagation();
+      dropZone.classList.add("over");
+    }));
+  ["dragleave", "drop"].forEach(evt =>
+    dropZone.addEventListener(evt, e => {
+      e.preventDefault(); e.stopPropagation();
+      dropZone.classList.remove("over");
+    }));
+  dropZone.addEventListener("drop", e => uploadFiles(e.dataTransfer.files));
+  uploadInput.addEventListener("change", () => uploadFiles(uploadInput.files));
+
+  async function uploadFiles(fileList) {
+    const files = Array.from(fileList || []).filter(f => /\.evtx$/i.test(f.name));
+    if (!files.length) {
+      $("#upload-status").textContent = ".evtx ファイルだけ受け付けます";
+      return;
+    }
+    let lastSaved = null;
+    for (const f of files) {
+      const fd = new FormData(); fd.append("file", f);
+      $("#upload-status").textContent =
+        `アップロード中… ${f.name} (${fmtSize(f.size)})`;
+      try {
+        const r = await fetch("/api/upload", { method: "POST", body: fd });
+        const d = await r.json();
+        if (d.error) {
+          $("#upload-status").textContent = "エラー: " + d.error;
+          return;
+        }
+        lastSaved = d.saved[0];
+      } catch (e) {
+        $("#upload-status").textContent = "通信エラー: " + e;
+        return;
+      }
+    }
+    $("#upload-status").textContent =
+      files.length === 1
+        ? `保存しました → ${lastSaved.rel}`
+        : `${files.length} 個のファイルを保存しました`;
+    await refreshWorkspace();
+    if (lastSaved) {
+      // Auto-select the most recently uploaded file; the user can still
+      // click another row to override.
+      selectTarget({ ...lastSaved, type: "file" });
+    }
+  }
+
+  // -------- presets --------
+  const PRESETS = {
+    standard: {
+      min_level: "medium", eid_filter: false, enable_all: false,
+      proven_only: false, dedupe: true,
+    },
+    fast: {
+      min_level: "medium", eid_filter: true, enable_all: false,
+      proven_only: true, dedupe: true,
+    },
+    deep: {
+      min_level: "informational", eid_filter: false, enable_all: true,
+      proven_only: false, dedupe: false,
+    },
+  };
+  function applyPreset(name) {
+    if (name === "custom") { updateScanButton(); return; }
+    const p = PRESETS[name]; if (!p) return;
+    $("#min-level").value = p.min_level;
+    $("#eid-filter").checked = p.eid_filter;
+    $("#enable-all").checked = p.enable_all;
+    $("#proven-only").checked = p.proven_only;
+    $("#dedupe").checked = p.dedupe;
+    updateScanButton();
+  }
+  document.querySelectorAll(".preset-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll(".preset-btn").forEach(b =>
+        b.classList.toggle("active", b === btn));
+      applyPreset(btn.dataset.preset);
+    };
+  });
+  // Any manual change to settings switches the preset to "custom".
+  ["min-level", "eid-filter", "enable-all", "proven-only", "dedupe",
+   "include-tags", "exclude-tags", "ts-start", "ts-end"
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      document.querySelectorAll(".preset-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.preset === "custom");
+      });
+      updateScanButton();
+    });
+  });
+
+  // -------- scan summary + enable/disable --------
+  function updateScanButton() {
+    const btn = $("#scan-btn");
+    const summary = $("#scan-summary");
+    const path = $("#target-path").value.trim();
+    const type = $("#target-type").value;
+    const live = $("#allow-live").checked && type === "live";
+    const hasTarget = live || path.length > 0;
+    btn.disabled = !hasTarget;
+    if (!hasTarget) {
+      summary.textContent = "先にステップ 1 で対象を選んでください";
+      return;
+    }
+    const level = $("#min-level").value;
+    const flags = [];
+    if ($("#eid-filter").checked)  flags.push("EIDフィルタ");
+    if ($("#enable-all").checked)  flags.push("全ルール");
+    if ($("#proven-only").checked) flags.push("実績ルールのみ");
+    if ($("#dedupe").checked)      flags.push("重複排除");
+    const targetLabel = live ? "ライブ解析" : path;
+    summary.textContent =
+      `${targetLabel} ・ 最小レベル: ${level}` +
+      (flags.length ? ` ・ ${flags.join(" / ")}` : "");
+  }
+
+  // Hooks that should also recompute the summary.
+  $("#target-type").addEventListener("change", updateScanButton);
+  $("#allow-live").addEventListener("change", updateScanButton);
+
+  // -------- scan submission --------
+  let liveES = null;
+  $("#scan-btn").onclick = async () => {
+    if ($("#scan-btn").disabled) return;
+    const targetType = $("#target-type").value;
+    const params = {
+      target: { type: targetType, path: $("#target-path").value.trim() },
+      allow_live: $("#allow-live").checked,
+      min_level: $("#min-level").value,
+      eid_filter: $("#eid-filter").checked,
+      enable_all_rules: $("#enable-all").checked,
+      proven_rules: $("#proven-only").checked,
+      remove_duplicates: $("#dedupe").checked,
+      include_tags: $("#include-tags").value.split(",").map(s => s.trim()).filter(Boolean),
+      exclude_tags: $("#exclude-tags").value.split(",").map(s => s.trim()).filter(Boolean),
+      timeline_start: $("#ts-start").value.trim() || null,
+      timeline_end: $("#ts-end").value.trim() || null,
+    };
+    const r = await fetch("/api/scan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params)
+    });
+    const d = await r.json();
+    if (d.error) { alert("スキャンを開始できませんでした: " + d.error); return; }
+    bindLive(d.job_id);
+  };
+
+  // Refresh button on the workspace panel.
+  $("#ws-refresh").onclick = refreshWorkspace;
+
+  // Job id whose stream is currently being shown in the live feed.
+  // Detection rows in the feed key off this when fetching detail.
+  let liveJobId = null;
+
+  function bindLive(jobId) {
+    liveJobId = jobId;
+    $("#live-card").hidden = false;
+    $("#live-jobid").textContent = "#" + jobId;
+    $("#live-feed").innerHTML = "";
+    $("#m-count").textContent = "0";
+    $("#m-status").textContent = localizeStatus("queued");
+    $("#m-elapsed").textContent = "0秒";
+    if (liveES) liveES.close();
+    const startedAt = Date.now();
+    const tick = setInterval(() => {
+      $("#m-elapsed").textContent = Math.round((Date.now() - startedAt) / 1000) + "秒";
+    }, 1000);
+
+    liveES = new EventSource(`/api/jobs/${jobId}/stream`);
+    liveES.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === "state") {
+        $("#m-status").textContent = localizeStatus(msg.job.status);
+        $("#m-status").className = "status-" + msg.job.status;
+        if (["done", "failed", "cancelled"].includes(msg.job.status)) {
+          clearInterval(tick);
+        }
+      } else if (msg.type === "detection") {
+        $("#m-count").textContent = msg.n;
+        // Pass the per-job line number so the row can fetch its enriched
+        // detail (rule description, ATT&CK info, related events).
+        appendDetection(msg.event, msg.n);
+      } else if (msg.type === "complete") {
+        liveES.close(); liveES = null; clearInterval(tick);
+        refreshJobs();
+      } else if (msg.type === "error") {
+        const row = document.createElement("div");
+        row.className = "row"; row.style.color = "var(--bad)";
+        row.textContent = `[エラー/${msg.stage}] ${msg.msg}`;
+        $("#live-feed").appendChild(row);
+      }
+    };
+    liveES.onerror = () => { clearInterval(tick); };
+  }
+
+  function appendDetection(ev, lineNo) {
+    const lvl = (ev.Level || "info").toLowerCase();
+    const row = document.createElement("div");
+    row.className = "row clickable";
+    row.dataset.jobId = liveJobId || "";
+    row.dataset.lineNo = String(lineNo || 0);
+    const ts = document.createElement("div"); ts.textContent = ev.Timestamp || "";
+    const lv = document.createElement("div");
+    lv.innerHTML = `<span class="lvl lvl-${lvl}">${lvl.slice(0,4)}</span>`;
+    const title = document.createElement("div");
+    title.innerHTML = `${escapeHtml(ev.RuleTitle || ev.Title || "(タイトル無し)")} `
+                    + `<span class="muted small">▾</span>`;
+    const meta = document.createElement("div"); meta.className = "muted";
+    meta.textContent = [ev.Computer, ev.Channel, ev.EventID].filter(Boolean).join(" · ");
+    row.append(ts, lv, title, meta);
+    row.addEventListener("click", () => toggleExplain(row, ev));
+    const feed = $("#live-feed");
+    feed.appendChild(row);
+    while (feed.children.length > 1600) feed.removeChild(feed.firstChild);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  // -------- 検知解説 (ライブフィード行の展開) --------
+
+  // ATT&CK technique → 日本語要約 + 攻撃者が「何を狙っているか」の説明。
+  // tNNNN.NNN 形式 (Hayabusa の tag) を小文字キーで持つ。
+  const ATTACK_INFO = {
+    "t1003":     ["認証情報ダンプ", "メモリやレジストリからパスワード/ハッシュを抜き取り、横展開や成りすましに使う。"],
+    "t1003.001": ["LSASS メモリ", "Windows の認証プロセス lsass.exe からハッシュやパスワードを抜き取る。Mimikatz・comsvcs.dll 経由が定番。"],
+    "t1003.002": ["SAM データベース", "ローカルアカウントのハッシュを SAM レジストリから取り出す。"],
+    "t1027":     ["難読化", "ペイロードを base64 や暗号化で隠して検知を回避する。"],
+    "t1036":     ["なりすまし", "正規ファイル名や場所を装って実行する (例: System32 に偽 svchost.exe)。"],
+    "t1055":     ["プロセスインジェクション", "他の正規プロセスにコードを注入して身を隠しつつ実行する。"],
+    "t1059":     ["コマンド・スクリプト実行", "シェル経由で攻撃者のコマンドを走らせる。"],
+    "t1059.001": ["PowerShell", "PowerShell を使った攻撃。難読化・メモリ実行・AMSI bypass を伴うことが多い。"],
+    "t1059.003": ["コマンドプロンプト", "cmd.exe / batch 経由のコマンド実行。"],
+    "t1068":     ["権限昇格", "脆弱性やドライバを悪用して管理者・SYSTEM 権限を得る。BYOVD が増加中。"],
+    "t1070":     ["証拠の隠蔽", "ログを消したり、ファイルを削除したりして痕跡を消す。"],
+    "t1070.001": ["Windows イベントログのクリア", "wevtutil cl や Clear-EventLog でログを消去。攻撃直後に行われる。"],
+    "t1071":     ["C2 通信", "HTTP/DNS など正常に見えるプロトコルで指令サーバと通信。"],
+    "t1078":     ["有効なアカウント悪用", "盗んだ正規アカウントでログイン。検知をすり抜けやすい。"],
+    "t1082":     ["システム情報収集", "OS バージョン・ユーザー名・ドメインなどを集めて偵察する。"],
+    "t1083":     ["ファイル/ディレクトリ偵察", "dir, Get-ChildItem などで価値のあるファイルを探す。"],
+    "t1105":     ["外部からの追加ツール持込み", "certutil / curl / bitsadmin で C2 から追加 malware を落とす。"],
+    "t1112":     ["レジストリ改変", "永続化や設定改ざんのためレジストリを操作。"],
+    "t1218":     ["署名済みバイナリ悪用 (LOLBin)", "Microsoft 署名済みツール (rundll32, mshta 等) を悪用して防御を回避。"],
+    "t1486":     ["データ暗号化 (ランサム)", "ファイルを暗号化して身代金を要求する。"],
+    "t1490":     ["復元の阻害", "vssadmin delete shadows / wbadmin で復元手段を破壊。ランサム実行の直前。"],
+    "t1543":     ["サービス/プロセス作成", "新しいサービスやプロセスを永続化目的で登録。"],
+    "t1543.003": ["Windows サービス", "新規 Windows サービスとして malware を登録。再起動後も動き続ける。SYSTEM 権限になることも。"],
+    "t1546":     ["イベントトリガ永続化", "WMI / イベントに紐づけて永続化。"],
+    "t1546.003": ["WMI イベント購読", "__EventFilter + __EventConsumer の組合せでイベント発生時に自動実行。"],
+    "t1547":     ["ブート/ログオン永続化", "Run キー、Startup フォルダ、スケジュールタスク等で起動時に実行。"],
+    "t1547.001": ["Run キー / Startup", "HKLM/HKCU の Run キーや Startup フォルダにエントリ追加。"],
+    "t1548":     ["UAC バイパス", "管理者承認を出さずに高権限プロセスを起動。"],
+    "t1562":     ["防御機構の無効化", "セキュリティ製品・ログ・監査ポリシを止めて検知を逃れる。"],
+    "t1562.001": ["セキュリティツールの停止", "Defender / EDR / Sysmon を停止・除外。"],
+    "t1562.002": ["イベントログの無効化", "EventLog サービスを止めるか監査ポリシを下げる。"],
+    "t1566":     ["フィッシング", "メール添付・リンクから初期侵入。"],
+  };
+
+  // 重要度の意味 + 推奨アクション。
+  const SEVERITY_INFO = {
+    critical:      { ja: "重大", desc: "実害が出ている / 出る寸前。即時調査と封じ込めが必要です。", urgency: "今すぐ確認" },
+    high:          { ja: "高",   desc: "攻撃の強い兆候。本日中に確認してください。", urgency: "本日中" },
+    medium:        { ja: "中",   desc: "怪しいが正規利用と区別しにくい場合あり。コンテキストで判断。", urgency: "週内に確認" },
+    low:           { ja: "低",   desc: "補助情報。他の検知と組み合わせて意味を持つことが多い。", urgency: "コンテキストで参照" },
+    informational: { ja: "情報", desc: "通常運用の記録。攻撃の前後関係を追うときに参照。", urgency: "ログとして保管" },
+    info:          { ja: "情報", desc: "通常運用の記録。攻撃の前後関係を追うときに参照。", urgency: "ログとして保管" },
+  };
+
+  function attackBadge(tag) {
+    // tag は "attack.t1543.003" 形式。先頭の "attack." を除いて lookup。
+    const key = tag.toLowerCase().replace(/^attack\./, "");
+    const info = ATTACK_INFO[key];
+    const tNum = key.toUpperCase();
+    const ja = info ? info[0] : "";
+    const desc = info ? info[1] : "";
+    const url = "https://attack.mitre.org/techniques/" + tNum.replace(".", "/") + "/";
+    return `<a class="attack-tag" href="${url}" target="_blank" rel="noopener"
+      title="${escapeHtml(desc || tNum)}">${tNum}${ja ? " · " + escapeHtml(ja) : ""}</a>`;
+  }
+
+  function suggestNextSteps(detail, ev) {
+    const tags = (detail.attack_tags || []).map(t => t.toLowerCase());
+    const steps = [];
+    if (tags.some(t => t.startsWith("attack.t1003"))) {
+      steps.push("lsass.exe にアクセスしたプロセスの **親系統** を Sysmon EID 1 / Security 4688 で確認。");
+      steps.push("そのプロセスが **RDP / WMI / PsExec 経由で起動された** なら、横展開のシグナル。");
+    }
+    if (tags.some(t => t.startsWith("attack.t1543"))) {
+      steps.push("登録されたサービスバイナリの **署名・SHA256** を確認 (LOLDrivers でないか)。");
+      steps.push("**ImagePath が C:\\Users\\, C:\\Temp\\, %ProgramData%** ならほぼ確実に malicious。");
+    }
+    if (tags.some(t => t.startsWith("attack.t1059.001"))) {
+      steps.push("PowerShell 4104 の **ScriptBlockText** を読み、難読化 / IEX / DownloadString を確認。");
+      steps.push("**親プロセス** が explorer.exe (人手起動) か wscript.exe (添付ファイル経由) かで侵入経路が分かる。");
+    }
+    if (tags.some(t => t.startsWith("attack.t1070") || t.startsWith("attack.t1562"))) {
+      steps.push("**直前** に動いたプロセスを優先確認。攻撃者は痕跡を消す前に本命の操作をしている。");
+      steps.push("WEC / Sysmon 別チャネルに **同時刻のイベント** があれば、それが「消されなかった真実」。");
+    }
+    if (tags.some(t => t.startsWith("attack.t1490") || t.startsWith("attack.t1486"))) {
+      steps.push("**ランサム実行直前** の可能性。直ちにネットワーク隔離を検討。");
+      steps.push("同じホストで **大量のファイル変更 (Sysmon EID 11)** が出ていないか確認。");
+    }
+    if (tags.some(t => t.startsWith("attack.t1105") || t.startsWith("attack.t1218"))) {
+      steps.push("外部通信先 (URL / IP) を確認。**Microsoft 系以外** なら C2 の可能性。");
+      steps.push("ダウンロード後の **子プロセス** が何を実行したかを系統で追う。");
+    }
+    if (!steps.length) {
+      steps.push("「結果」タブで **同じホストの ±5 分以内の他検知** を確認してコンテキストを掴む。");
+      steps.push("ルールの **誤検知例 (falsepositives)** を確認し、業務での正規利用と一致しないか比較。");
+    }
+    return steps;
+  }
+
+  async function toggleExplain(row, ev) {
+    // Toggle: if an explain row already follows this row, remove it.
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains("explain-row")) {
+      next.remove();
+      return;
+    }
+    // Collapse any other open explain panel — keep the feed tidy.
+    document.querySelectorAll(".explain-row").forEach(e => e.remove());
+
+    const explain = document.createElement("div");
+    explain.className = "explain-row";
+    explain.innerHTML = `<div class="muted small" style="padding:10px">読込中…</div>`;
+    row.parentNode.insertBefore(explain, row.nextSibling);
+
+    const jobId = row.dataset.jobId;
+    const lineNo = row.dataset.lineNo;
+    let detail = null;
+    try {
+      const r = await fetch(`/api/detections/${jobId}/${lineNo}/detail`);
+      detail = await r.json();
+    } catch (e) {
+      explain.innerHTML = `<div class="muted small" style="padding:10px;color:#ef5350">
+        詳細取得に失敗しました: <code>${escapeHtml(String(e))}</code></div>`;
+      return;
+    }
+
+    const lvl = (ev.Level || "info").toLowerCase();
+    const sev = SEVERITY_INFO[lvl] || SEVERITY_INFO.info;
+    const desc = detail?.rule?.description?.trim()
+      || "(このルールには詳細な説明が登録されていません)";
+    const attackHtml = (detail?.attack_tags?.length)
+      ? detail.attack_tags.map(attackBadge).join(" ")
+      : `<span class="muted small">ATT&CK タグ未指定</span>`;
+    const steps = suggestNextSteps(detail || {}, ev);
+    const fpHtml = (detail?.rule?.falsepositives?.length)
+      ? "<ul>" + detail.rule.falsepositives.map(s => `<li>${escapeHtml(s)}</li>`).join("") + "</ul>"
+      : `<span class="muted small">記載なし</span>`;
+    const ruleFile = detail?.rule?.filename || "";
+
+    explain.innerHTML = `
+      <div class="explain-block">
+        <div class="explain-grid">
+          <div class="explain-col">
+            <h4>なにを検知している?</h4>
+            <p>${escapeHtml(desc)}</p>
+            <h4>誤検知の例</h4>
+            <div>${fpHtml}</div>
+          </div>
+          <div class="explain-col">
+            <h4>重要度 — ${sev.ja} (${escapeHtml(lvl)})</h4>
+            <p>${escapeHtml(sev.desc)} <span class="urgency">対応目安: ${escapeHtml(sev.urgency)}</span></p>
+            <h4>ATT&amp;CK 技術</h4>
+            <div class="attack-tags">${attackHtml}</div>
+            <h4>次にすべきこと</h4>
+            <ol>${steps.map(s => `<li>${s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`).join("")}</ol>
+          </div>
+        </div>
+        <div class="explain-foot muted small">
+          ${ruleFile ? "ルールファイル: <code>" + escapeHtml(ruleFile) + "</code>" : ""}
+          &nbsp; &nbsp;
+          <a href="#" data-job="${jobId}" data-line="${lineNo}" class="open-in-results">結果タブで詳細を見る →</a>
+        </div>
+      </div>`;
+
+    // Wire the "open in results tab" link to actually navigate + select.
+    const link = explain.querySelector(".open-in-results");
+    if (link) link.addEventListener("click", (e) => {
+      e.preventDefault();
+      const tabBtn = document.querySelector('.tab[data-tab="results"]');
+      if (tabBtn) tabBtn.click();
+      // Give the tab a tick to render, then open the job detail.
+      setTimeout(() => openDetail(jobId), 80);
+    });
+  }
+
+  // -------- jobs / results tab --------
+  async function refreshJobs() {
+    const r = await fetch("/api/jobs");
+    const jobs = await r.json();
+    const tb = $("#jobs-table tbody"); tb.innerHTML = "";
+    jobs.forEach(j => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td><code>${j.id}</code></td>
+        <td class="status-${j.status}">${localizeStatus(j.status)}</td>
+        <td>${fmtTime(j.started_at)}</td>
+        <td>${fmtDur(j.started_at, j.finished_at)}</td>
+        <td>${j.detection_count}</td>
+        <td><button data-id="${j.id}">開く</button></td>`;
+      tr.querySelector("button").onclick = (e) => { e.stopPropagation(); openDetail(j.id); };
+      tb.appendChild(tr);
+    });
+  }
+
+  // Selected detection — set when the user clicks a row. Verdict buttons act on this.
+  let currentDetection = null;
+
+  const VERDICT_LABEL = { tp: "TP (本物)", fp: "FP (誤検知)", null: "未判定" };
+
+  function verdictCellHtml(v) {
+    if (v === "tp") return `<span class="verdict-cell tp">TP</span>`;
+    if (v === "fp") return `<span class="verdict-cell fp">FP</span>`;
+    return `<span class="verdict-cell none">—</span>`;
+  }
+
+  function setVerdictButtons(v) {
+    $("#verdict-tp").classList.toggle("active", v === "tp");
+    $("#verdict-fp").classList.toggle("active", v === "fp");
+    $("#verdict-clear").classList.toggle("active", !v);
+  }
+
+  async function postVerdict(verdict) {
+    if (!currentDetection) return;
+    const { _job_id, _line_no } = currentDetection;
+    if (!_job_id || _line_no == null) {
+      alert("この検知は SQLite に未登録のためフィードバックできません。"); return;
+    }
+    const body = JSON.stringify({ verdict });
+    const r = await fetch(`/api/detections/${_job_id}/${_line_no}/feedback`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body
+    });
+    const res = await r.json();
+    if (res.error) { $("#verdict-status").textContent = "エラー: " + res.error; return; }
+    currentDetection._verdict = verdict || null;
+    setVerdictButtons(currentDetection._verdict);
+    $("#verdict-status").textContent =
+      `登録しました — このルール累計: TP ${res.tp} / FP ${res.fp}`;
+    // Refresh the row in-place and the feedback summary
+    const row = document.querySelector(
+      `#detections-table tbody tr[data-line="${_line_no}"]`);
+    if (row) row.querySelector(".verdict-cell-host").innerHTML = verdictCellHtml(currentDetection._verdict);
+    if ($("#tab-rules").classList.contains("active")) loadFeedback();
+  }
+
+  $("#verdict-tp").onclick = () => postVerdict("tp");
+  $("#verdict-fp").onclick = () => postVerdict("fp");
+  $("#verdict-clear").onclick = () => postVerdict(null);
+
+  async function addSuppression(opts) {
+    if (!currentDetection) return;
+    const reason = prompt("抑制の理由 (省略可):", opts.defaultReason || "") || null;
+    const body = {
+      rule_id: opts.rule ? currentDetection._rule_id : null,
+      computer: opts.host ? currentDetection.Computer : null,
+      reason,
+    };
+    const r = await fetch("/api/suppressions", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const res = await r.json();
+    if (res.error) { $("#suppress-status").textContent = "エラー: " + res.error; return; }
+    $("#suppress-status").textContent = `抑制を登録しました (#${res.id})`;
+    // Reload the detection list so newly-hidden rows disappear (or get
+    // greyed out when "include suppressed" is on).
+    if (lastJobId) openDetail(lastJobId);
+    if ($("#tab-rules").classList.contains("active")) loadSuppressions();
+  }
+
+  $("#suppress-host-rule").onclick = () => addSuppression({ rule: true, host: true });
+  $("#suppress-rule").onclick = () => addSuppression({ rule: true, host: false });
+  $("#suppress-host").onclick = () => addSuppression({ rule: false, host: true });
+
+  let lastJobId = null;
+
+  // -------- detection detail (structured view) --------
+
+  // Sub-tab routing inside the detail pane.
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest(".subtab");
+    if (!t) return;
+    document.querySelectorAll(".subtab").forEach(x => x.classList.toggle("active", x === t));
+    const id = "sub-" + t.dataset.sub;
+    document.querySelectorAll(".subpanel").forEach(p => p.classList.toggle("active", p.id === id));
+    // Lazy-load the process tree when its subtab is opened.
+    if (t.dataset.sub === "ptree") loadProcessTree();
+  });
+
+  // Re-fetch the tree when the window-size dropdown changes.
+  document.addEventListener("change", (e) => {
+    if (e.target && e.target.id === "ptree-window") loadProcessTree();
+  });
+
+  let currentDetectionForTree = null;
+  async function loadProcessTree() {
+    if (!currentDetection) return;
+    currentDetectionForTree = currentDetection;
+    const host = $("#ptree-host");
+    const summary = $("#ptree-summary");
+    host.innerHTML = `<div class="ptree-empty">読込中…</div>`;
+    summary.textContent = "";
+    const win = $("#ptree-window")?.value || "10";
+    try {
+      const r = await fetch(`/api/detections/${currentDetection._job_id}/`
+        + `${currentDetection._line_no}/process_tree?window=${win}`);
+      const t = await r.json();
+      // The user may have switched detections while we were waiting;
+      // bail if so to avoid clobbering the new tree's render.
+      if (currentDetectionForTree !== currentDetection) return;
+      if (t.error) {
+        host.innerHTML = `<div class="ptree-empty">エラー: ${escapeHtml(t.error)}</div>`;
+        return;
+      }
+      summary.textContent = `${t.host} ・ 検出ノード ${t.nodes_seen}`
+        + (t.truncated ? ` ・ 上限到達 (一部省略)` : "")
+        + ` ・ キー: ${t.key_mode}`;
+      if (!t.roots || !t.roots.length) {
+        host.innerHTML = `<div class="ptree-empty">
+          このホストの ±${win} 分以内に Sysmon EID 1 (プロセス作成) ログが
+          見つかりませんでした。<br/>
+          <span class="small">対象ホストで Sysmon が動いていないか、
+          このスキャンに該当チャネルが含まれていない可能性があります。</span>
+        </div>`;
+        return;
+      }
+      host.innerHTML = "";
+      const ul = document.createElement("ul");
+      t.roots.forEach(n => ul.appendChild(renderPtreeNode(n)));
+      host.appendChild(ul);
+      // Scroll the focal node into view if any.
+      const focal = host.querySelector(".pnode.focal");
+      if (focal) focal.scrollIntoView({ block: "center", behavior: "smooth" });
+    } catch (e) {
+      host.innerHTML = `<div class="ptree-empty">取得に失敗しました: ${escapeHtml(String(e))}</div>`;
+    }
+  }
+
+  function renderPtreeNode(n) {
+    const li = document.createElement("li");
+    const div = document.createElement("div");
+    const imgName = (n.image || "").split("\\").pop() || "(unknown)";
+    const lvl = n.detection?.level || "";
+    const cls = ["pnode"];
+    if (n.is_focal) cls.push("focal");
+    if (n.detection) { cls.push("has-detection"); if (lvl) cls.push("lvl-" + lvl); }
+    div.className = cls.join(" ");
+    const detBadge = n.detection
+      ? `<span class="lvl lvl-${lvl}">${lvl.slice(0,4)}</span>
+         <span class="muted" style="display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(n.detection.rule_title || "")}</span>`
+      : "";
+    div.innerHTML = `
+      <div class="pname">
+        <span class="img">${escapeHtml(imgName)}</span>
+        <span class="muted">  pid=${escapeHtml(n.pid || "")}</span>
+        <span class="cmd" title="${escapeHtml(n.cmdline || "")}">${escapeHtml(n.cmdline || "")}</span>
+      </div>
+      <div class="pmeta">${escapeHtml(n.user || "")}${n.integrity ? "  ·  " + escapeHtml(n.integrity) : ""}
+        <br/><span style="color:var(--muted)">${escapeHtml((n.ts || "").slice(0, 19))}</span></div>
+      <div class="pdet">${detBadge}</div>`;
+    if (n.detection) {
+      div.style.cursor = "pointer";
+      div.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        // Pivot to this process's own detection without leaving the tab.
+        fetch(`/api/detections/${n.detection.job_id}/${n.detection.line_no}/detail`)
+          .then(r => r.json()).then(d => { if (d.detection) renderDetail(d.detection); });
+      });
+    }
+    li.appendChild(div);
+    if (n.children && n.children.length) {
+      const ul = document.createElement("ul");
+      n.children.forEach(c => ul.appendChild(renderPtreeNode(c)));
+      li.appendChild(ul);
+    }
+    return li;
+  }
+
+  // Hayabusa's "Details" field is a free-text string that nevertheless
+  // tends to contain k: v ¦ k: v segments. This makes it readable as a
+  // table. Fields like "ExtraFieldInfo" are nested dicts that we render
+  // recursively as a definition list.
+  function renderDetailsString(host, val) {
+    host.innerHTML = "";
+    if (val == null) return false;
+    if (typeof val !== "string") {
+      host.textContent = JSON.stringify(val, null, 2);
+      return true;
+    }
+    // Split on the unicode broken-bar that Hayabusa uses as a field
+    // separator inside the Details field. Fall back to newline split.
+    const sep = val.includes("¦") ? "¦" : (val.includes("\n") ? "\n" : null);
+    if (!sep) { host.textContent = val; return !!val; }
+    val.split(sep).map(s => s.trim()).filter(Boolean).forEach(seg => {
+      const m = seg.match(/^([^:]{1,40}):\s*(.*)$/s);
+      const line = document.createElement("div");
+      if (m) {
+        line.innerHTML = `<span class="muted small">${m[1]}: </span>${escapeHtml(m[2])}`;
+      } else {
+        line.textContent = seg;
+      }
+      host.appendChild(line);
+    });
+    return true;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  function kvPair(label, value, mono = false) {
+    const cell = document.createElement("div");
+    const cls = mono ? "v mono" : "v";
+    cell.innerHTML = `<label>${escapeHtml(label)}</label>
+      <div class="${cls}">${value == null || value === ""
+        ? '<span class="muted small">—</span>'
+        : escapeHtml(String(value))}</div>`;
+    return cell;
+  }
+
+  async function renderDetail(ev) {
+    // Header — title, level chip, attack tags.
+    const lvl = (ev.Level || "info").toLowerCase();
+    $("#dt-level").className = "lvl lvl-" + lvl;
+    $("#dt-level").textContent = lvl;
+    $("#dt-title").textContent = ev.RuleTitle || ev.Title || "(タイトル無し)";
+    $("#dt-meta").textContent = `#${ev._job_id} / line ${ev._line_no}`;
+
+    // Overview tab — the high-signal fields in a compact grid.
+    const kv = $("#dt-kv"); kv.innerHTML = "";
+    kv.appendChild(kvPair("時刻", ev.Timestamp));
+    kv.appendChild(kvPair("コンピュータ", ev.Computer));
+    kv.appendChild(kvPair("チャネル", ev.Channel, true));
+    kv.appendChild(kvPair("EventID", ev.EventID));
+    kv.appendChild(kvPair("RecordID", ev.RecordID));
+    kv.appendChild(kvPair("RuleID", ev._rule_id, true));
+
+    // Details / ExtraFieldInfo (when present).
+    const hasDetails = renderDetailsString($("#dt-details"), ev.Details);
+    $("#dt-details-card").hidden = !hasDetails;
+    const hasExtra = renderDetailsString($("#dt-extra"), ev.ExtraFieldInfo);
+    $("#dt-extra-card").hidden = !hasExtra;
+
+    // Raw JSON — strip injected meta fields starting with _.
+    const display = Object.fromEntries(
+      Object.entries(ev).filter(([k]) => !k.startsWith("_")));
+    $("#detail-pane").textContent = JSON.stringify(display, null, 2);
+
+    // Reset placeholder content for async-loaded tabs so a fast clicker
+    // doesn't see stale data from the previous detection.
+    $("#dt-attack").innerHTML = "";
+    $("#dt-rule-card").hidden = true;
+    $("#dt-rule-empty").hidden = true;
+    $("#related-table tbody").innerHTML =
+      `<tr><td colspan="5" class="muted small">読込中…</td></tr>`;
+    $("#history-table tbody").innerHTML =
+      `<tr><td colspan="5" class="muted small">読込中…</td></tr>`;
+    $("#dt-related-cnt").textContent = "";
+    $("#dt-hist-cnt").textContent = "";
+
+    // Asynchronously fetch enriched detail.
+    try {
+      const r = await fetch(`/api/detections/${ev._job_id}/${ev._line_no}/detail`);
+      const d = await r.json();
+
+      // ATT&CK tags as small chips.
+      d.attack_tags.forEach(t => {
+        const chip = document.createElement("span");
+        chip.className = "attack-tag";
+        chip.textContent = t.replace(/^attack\./, "");
+        $("#dt-attack").appendChild(chip);
+      });
+
+      // Rule tab.
+      if (d.rule) {
+        $("#dt-rule-empty").hidden = true;
+        $("#dt-rule-card").hidden = false;
+        $("#dtr-title").textContent = d.rule.title || "—";
+        $("#dtr-id").textContent = d.rule.id || ev._rule_id || "—";
+        $("#dtr-level").textContent = d.rule.level || "—";
+        $("#dtr-file").textContent = d.rule.filename || "";
+        $("#dtr-desc").textContent = d.rule.description || "(説明なし)";
+        const fp = $("#dtr-fp"); fp.innerHTML = "";
+        (d.rule.falsepositives || []).forEach(s => {
+          const li = document.createElement("li"); li.textContent = s; fp.appendChild(li);
+        });
+        if (!fp.children.length) fp.innerHTML = `<li class="muted small">記載なし</li>`;
+        const refs = $("#dtr-refs"); refs.innerHTML = "";
+        (d.rule.references || []).forEach(s => {
+          const li = document.createElement("li");
+          if (/^https?:\/\//.test(s)) {
+            li.innerHTML = `<a href="${escapeHtml(s)}" target="_blank" rel="noopener">${escapeHtml(s)}</a>`;
+          } else { li.textContent = s; }
+          refs.appendChild(li);
+        });
+        if (!refs.children.length) refs.innerHTML = `<li class="muted small">記載なし</li>`;
+        $("#dtr-yaml").textContent = d.rule.raw_yaml || "";
+      } else {
+        $("#dt-rule-empty").hidden = false;
+        $("#dt-rule-card").hidden = true;
+      }
+
+      // Related table.
+      const rt = $("#related-table tbody"); rt.innerHTML = "";
+      $("#dt-related-cnt").textContent = `(${d.related.length})`;
+      if (!d.related.length) {
+        rt.innerHTML = `<tr><td colspan="5" class="muted small">±5分以内に他の検知はありません。</td></tr>`;
+      } else {
+        d.related.forEach(r2 => {
+          const tr = document.createElement("tr");
+          const l = (r2.level || "info").toLowerCase();
+          tr.innerHTML = `<td>${r2.ts || ""}</td>
+            <td><span class="lvl lvl-${l}">${l.slice(0,4)}</span></td>
+            <td>${escapeHtml(r2.rule_title || "")}</td>
+            <td>${escapeHtml(r2.channel || "")}</td>
+            <td>${r2.event_id || ""}</td>`;
+          tr.onclick = () => {
+            // Pivot: re-open the host job's detail with this detection
+            // selected. We approximate that by fetching the row.
+            currentDetection = null;
+            fetch(`/api/detections/${r2.job_id}/${r2.line_no}/detail`)
+              .then(r => r.json()).then(d2 => {
+                if (d2.detection) renderDetail(d2.detection);
+              });
+          };
+          rt.appendChild(tr);
+        });
+      }
+
+      // History (other fires of the same rule).
+      const ht = $("#history-table tbody"); ht.innerHTML = "";
+      $("#dt-hist-cnt").textContent = `(${d.rule_history.total})`;
+      const sample = d.rule_history.sample || [];
+      if (!sample.length) {
+        ht.innerHTML = `<tr><td colspan="5" class="muted small">他に発火例はありません。</td></tr>`;
+      } else {
+        sample.forEach(r2 => {
+          const tr = document.createElement("tr");
+          const l = (r2.level || "info").toLowerCase();
+          tr.innerHTML = `<td>${r2.ts || ""}</td>
+            <td><span class="lvl lvl-${l}">${l.slice(0,4)}</span></td>
+            <td>${escapeHtml(r2.computer || "")}</td>
+            <td>${escapeHtml(r2.channel || "")}</td>
+            <td>${r2.event_id || ""}</td>`;
+          tr.onclick = () => {
+            fetch(`/api/detections/${r2.job_id}/${r2.line_no}/detail`)
+              .then(r => r.json()).then(d2 => {
+                if (d2.detection) renderDetail(d2.detection);
+              });
+          };
+          ht.appendChild(tr);
+        });
+      }
+    } catch (e) {
+      console.error("detail fetch failed", e);
+    }
+  }
+
+  async function openDetail(id) {
+    lastJobId = id;
+    $("#detection-card").hidden = false;
+    $("#detail-jobid").textContent = "#" + id;
+    $("#detail-wrap").hidden = true;
+    currentDetection = null;
+
+    const filterText = $("#filter-text"); const filterLevel = $("#filter-level");
+    const showSuppressed = $("#filter-show-suppressed");
+    let cache = [];
+
+    async function load() {
+      const qs = new URLSearchParams({ offset: "0", limit: "500" });
+      if (filterLevel.value) qs.set("level", filterLevel.value);
+      if (filterText.value.trim()) qs.set("q", filterText.value.trim());
+      if (showSuppressed.checked) qs.set("include_suppressed", "1");
+      const r = await fetch(`/api/jobs/${id}?${qs}`);
+      const d = await r.json();
+      cache = d;
+      render();
+      $("#summary-btn").onclick = () => {
+        if (d.summary_available) window.open(`/api/jobs/${id}/summary`, "_blank");
+        else alert("このジョブにはまだ HTML サマリがありません。");
+      };
+    }
+
+    function render() {
+      const tb = $("#detections-table tbody"); tb.innerHTML = "";
+      cache.detections.forEach(ev => {
+        const lvl = (ev.Level || "info").toLowerCase();
+        const tr = document.createElement("tr");
+        tr.dataset.line = ev._line_no;
+        if (ev._suppressed) tr.classList.add("suppressed");
+        const supTag = ev._suppressed ? ` <span class="muted small">[抑制]</span>` : "";
+        tr.innerHTML = `<td>${ev.Timestamp || ""}</td>
+          <td><span class="lvl lvl-${lvl}">${lvl.slice(0,4)}</span></td>
+          <td>${ev.RuleTitle || ev.Title || ""}${supTag}</td>
+          <td>${ev.Computer || ""}</td>
+          <td>${ev.Channel || ""}</td>
+          <td>${ev.EventID || ""}</td>
+          <td class="verdict-cell-host">${verdictCellHtml(ev._verdict)}</td>`;
+        tr.onclick = () => {
+          currentDetection = ev;
+          $("#detail-wrap").hidden = false;
+          $("#verdict-status").textContent = "現在の判定: " + (VERDICT_LABEL[ev._verdict] || "未判定");
+          $("#suppress-status").textContent = ev._suppressed
+            ? "この検知は抑制されています: " + (ev._suppression_reason || "(理由なし)")
+            : "";
+          setVerdictButtons(ev._verdict);
+          renderDetail(ev);
+        };
+        tb.appendChild(tr);
+      });
+    }
+    filterText.oninput = load; filterLevel.onchange = load;
+    showSuppressed.onchange = load;
+    await load();
+  }
+
+  // -------- suppressions table (rules tab) --------
+  async function loadSuppressions() {
+    try {
+      const r = await fetch("/api/suppressions");
+      const rows = await r.json();
+      const tb = $("#suppressions-table tbody"); tb.innerHTML = "";
+      if (!rows.length) {
+        tb.innerHTML = `<tr><td colspan="7" class="muted small">抑制ルールはまだ登録されていません。検知詳細から「抑制」ボタンで登録できます。</td></tr>`;
+        return;
+      }
+      rows.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${row.id}</td>
+          <td><code>${row.scope}</code></td>
+          <td>${row.rule_id ? `<code>${row.rule_id}</code>` : "—"}</td>
+          <td>${row.computer ? `<code>${row.computer}</code>` : "—"}</td>
+          <td>${row.reason || ""}</td>
+          <td>${fmtTime(row.created_at)}</td>
+          <td><button data-id="${row.id}">解除</button></td>`;
+        tr.querySelector("button").onclick = async () => {
+          if (!confirm("この抑制を解除しますか?")) return;
+          await fetch(`/api/suppressions/${row.id}`, { method: "DELETE" });
+          loadSuppressions();
+          if (lastJobId) openDetail(lastJobId);
+        };
+        tb.appendChild(tr);
+      });
+    } catch { /* ignore */ }
+  }
+
+  // -------- rule feedback (rules tab) --------
+  async function loadFeedback() {
+    try {
+      const r = await fetch("/api/rule_feedback");
+      const rows = await r.json();
+      const tb = $("#feedback-table tbody"); tb.innerHTML = "";
+      if (!rows.length) {
+        tb.innerHTML = `<tr><td colspan="6" class="muted small">まだフィードバックがありません。検知をクリックして TP / FP を登録してください。</td></tr>`;
+        return;
+      }
+      rows.forEach(row => {
+        const tot = row.tp_count + row.fp_count;
+        const rate = tot ? ((row.fp_count / tot) * 100).toFixed(1) + "%" : "—";
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${row.rule_title || ""}</td>
+          <td><code>${row.rule_id}</code></td>
+          <td>${row.tp_count}</td>
+          <td>${row.fp_count}</td>
+          <td>${rate}</td>
+          <td>${row.last_at ? fmtTime(row.last_at) : ""}</td>`;
+        tb.appendChild(tr);
+      });
+    } catch { /* ignore */ }
+  }
+
+  // -------- rules tab --------
+  async function loadRules() {
+    const r = await fetch("/api/rules");
+    const d = await r.json();
+    $("#rules-summary").textContent = `${d.total} 件のルールを読み込み済み`;
+    const lvl = $("#rules-levels"); lvl.innerHTML = "";
+    Object.entries(d.by_level).sort((a,b) => b[1]-a[1]).forEach(([k,v]) => {
+      const c = document.createElement("span"); c.className = "chip";
+      c.innerHTML = `<b>${v}</b>${k}`; lvl.appendChild(c);
+    });
+    const cats = $("#rules-cats"); cats.innerHTML = "";
+    Object.entries(d.by_category).sort((a,b) => b[1]-a[1]).slice(0,40).forEach(([k,v]) => {
+      const c = document.createElement("span"); c.className = "chip";
+      c.innerHTML = `<b>${v}</b>${k}`; cats.appendChild(c);
+    });
+  }
+
+  // -------- lookup tables (rules tab) --------
+  async function loadLookups() {
+    try {
+      const r = await fetch("/api/lookups");
+      const d = await r.json();
+      const tb = $("#lookups-table tbody"); tb.innerHTML = "";
+      if (!d.lookups.length) {
+        tb.innerHTML = `<tr><td colspan="4" class="muted small">
+          lookups/ ディレクトリに表が見つかりません。<code>name.txt</code>
+          形式のファイルを置き、ルールから <code>lookup:</code> ブロックで
+          参照してください。</td></tr>`;
+        return;
+      }
+      d.lookups.forEach(it => {
+        const tr = document.createElement("tr");
+        const refs = it.referenced_by && it.referenced_by.length
+          ? it.referenced_by.length + " 件"
+          : `<span class="muted small">参照なし</span>`;
+        tr.innerHTML = `<td><code>${it.name}</code></td>
+          <td class="mono"><span title="${it.rel}">${it.filename}</span></td>
+          <td>${it.entries.toLocaleString()}</td>
+          <td>${refs}</td>`;
+        if (it.referenced_by && it.referenced_by.length) {
+          tr.title = "参照しているルール:\n" + it.referenced_by.join("\n");
+        }
+        tb.appendChild(tr);
+      });
+    } catch { /* ignore */ }
+  }
+
+  // -------- ハント (threat hunting) --------
+  // We split this out of the dashboard / results paths because the
+  // mental model is genuinely different: results = one job at a time,
+  // dashboard = aggregate trends, hunt = arbitrary cross-job queries.
+
+  // Quick-hypothesis presets. Each preset returns the same shape as the
+  // form, so applying a preset = filling form fields + running the search.
+  const HUNT_PRESETS = {
+    recent_crit: {
+      label: "直近 24h の重大",
+      apply: (f) => { f.window = "24h"; f.levels = ["critical", "high"]; }
+    },
+    anti_forensic: {
+      label: "痕跡隠蔽行為",
+      // We can't filter on ATT&CK tag directly without a rule index join,
+      // so we approximate via free-text against rule_title.
+      apply: (f) => { f.q = "clear|wevtutil|vssadmin|shadow|policy|EventLog|Audit"; }
+    },
+    lsass: {
+      label: "認証情報窃取",
+      apply: (f) => { f.q = "lsass|comsvcs|MiniDump|Credential|Mimikatz"; }
+    },
+    persistence: {
+      label: "永続化",
+      apply: (f) => { f.q = "Service|WMI|EventConsumer|Run|Startup|Scheduled"; }
+    },
+    cross_host: {
+      label: "横展開兆候 (同一ルールが複数ホスト)",
+      apply: (f) => { f.view = "by_rule"; /* the pivot view answers this directly */ }
+    },
+    noisy: {
+      label: "最多発火ルール",
+      apply: (f) => { f.view = "by_rule"; }
+    },
+  };
+
+  let huntInitialised = false;
+  let huntState = {  // current form state
+    host: "", window: "", from: "", to: "",
+    levels: [], channel: "", eid: "", q: "", verdict: "",
+    include_suppressed: false,
+    view: "list",
+  };
+
+  async function initHunt() {
+    if (!huntInitialised) {
+      try {
+        const r = await fetch("/api/hunt/facets");
+        const facets = await r.json();
+        // Populate the channel dropdown.
+        const sel = $("#hunt-channel"); sel.innerHTML = '<option value="">(指定なし)</option>';
+        facets.channels.forEach(c => {
+          const o = document.createElement("option");
+          o.value = c.name; o.textContent = `${c.name} (${c.count})`;
+          sel.appendChild(o);
+        });
+        // Build the level chip group.
+        const lvlHost = $("#hunt-levels"); lvlHost.innerHTML = "";
+        ["critical", "high", "medium", "low", "informational"].forEach(lv => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = `chip-btn lvl-${lv}`;
+          b.dataset.level = lv;
+          b.textContent = lv;
+          b.onclick = () => {
+            b.classList.toggle("active");
+          };
+          lvlHost.appendChild(b);
+        });
+      } catch (e) { console.error("[hunt] facets fetch failed:", e); }
+      wireHunt();
+      renderSavedHunts();
+      huntInitialised = true;
+    }
+    runHunt();  // show initial result (all detections, recent first)
+  }
+
+  function wireHunt() {
+    $("#hunt-run").onclick = () => runHunt();
+    $("#hunt-reset").onclick = () => resetHuntForm();
+    $("#hunt-save").onclick = () => saveCurrentHunt();
+    $("#hunt-export").onclick = () => exportHuntCSV();
+    $("#hunt-window").onchange = () => {
+      $("#hunt-custom-range").hidden = $("#hunt-window").value !== "custom";
+    };
+    // Preset buttons.
+    document.querySelectorAll(".hunt-presets .preset-btn").forEach(btn => {
+      btn.onclick = () => {
+        resetHuntForm();
+        const preset = HUNT_PRESETS[btn.dataset.hunt];
+        if (!preset) return;
+        const f = {};
+        preset.apply(f);
+        // Apply to form
+        if (f.window) $("#hunt-window").value = f.window;
+        if (f.q) $("#hunt-q").value = f.q;
+        if (f.levels) {
+          document.querySelectorAll("#hunt-levels .chip-btn").forEach(c => {
+            c.classList.toggle("active", f.levels.includes(c.dataset.level));
+          });
+        }
+        if (f.view) {
+          document.querySelectorAll(".hunt-tab").forEach(t => {
+            t.classList.toggle("active", t.dataset.view === f.view);
+          });
+          huntState.view = f.view;
+        }
+        runHunt();
+      };
+    });
+    // View tabs
+    document.querySelectorAll(".hunt-tab").forEach(t => {
+      t.onclick = () => {
+        document.querySelectorAll(".hunt-tab").forEach(x => x.classList.toggle("active", x === t));
+        huntState.view = t.dataset.view;
+        renderHuntView();
+      };
+    });
+  }
+
+  function resetHuntForm() {
+    $("#hunt-host").value = "";
+    $("#hunt-window").value = "";
+    $("#hunt-from").value = ""; $("#hunt-to").value = "";
+    $("#hunt-custom-range").hidden = true;
+    $("#hunt-channel").value = "";
+    $("#hunt-eid").value = "";
+    $("#hunt-q").value = "";
+    $("#hunt-verdict").value = "";
+    $("#hunt-include-suppressed").checked = false;
+    document.querySelectorAll("#hunt-levels .chip-btn").forEach(c => c.classList.remove("active"));
+  }
+
+  // Translate the form into URL search params + the current view.
+  function buildHuntParams() {
+    const params = new URLSearchParams();
+    const host = $("#hunt-host").value.trim();
+    if (host) params.set("host", host);
+
+    const window = $("#hunt-window").value;
+    const now = new Date();
+    if (window && window !== "custom") {
+      const ms = { "1h": 3.6e6, "24h": 8.64e7, "7d": 6.048e8, "30d": 2.592e9 }[window];
+      if (ms) {
+        params.set("from", new Date(now.getTime() - ms).toISOString());
+      }
+    } else if (window === "custom") {
+      if ($("#hunt-from").value) params.set("from", $("#hunt-from").value);
+      if ($("#hunt-to").value)   params.set("to",   $("#hunt-to").value);
+    }
+
+    document.querySelectorAll("#hunt-levels .chip-btn.active").forEach(c => {
+      params.append("level", c.dataset.level);
+    });
+    const ch = $("#hunt-channel").value; if (ch) params.set("channel", ch);
+    const eid = $("#hunt-eid").value.trim(); if (eid) params.set("eid", eid);
+    const q = $("#hunt-q").value.trim(); if (q) params.set("q", q);
+    const v = $("#hunt-verdict").value; if (v) params.set("verdict", v);
+    if ($("#hunt-include-suppressed").checked) params.set("include_suppressed", "1");
+    return params;
+  }
+
+  // Captured at the top so renderHuntView can re-render without re-fetching
+  // when the user just switches tabs (one fetch per filter change).
+  let huntLastSearch = null;
+  let huntLastPivots = {};
+
+  async function runHunt() {
+    const params = buildHuntParams();
+    const url = "/api/hunt/search?" + params + "&limit=500";
+    $("#hunt-total").textContent = "…";
+    $("#hunt-summary").textContent = "検索中";
+    try {
+      const r = await fetch(url);
+      const d = await r.json();
+      huntLastSearch = d;
+      huntLastPivots = {};  // invalidate pivot cache
+      $("#hunt-total").textContent = d.total.toLocaleString();
+      const filt = [];
+      if (params.get("host")) filt.push(`host=${params.get("host")}`);
+      if (params.getAll("level").length) filt.push(`level=${params.getAll("level").join(",")}`);
+      if (params.get("channel")) filt.push(`channel=${params.get("channel")}`);
+      if (params.get("eid")) filt.push(`eid=${params.get("eid")}`);
+      if (params.get("q")) filt.push(`q="${params.get("q")}"`);
+      if (params.get("from")) filt.push(`from=${params.get("from").slice(0, 16)}`);
+      $("#hunt-summary").textContent = filt.length
+        ? "件 (" + filt.join(", ") + ")"
+        : "件 (条件指定なし)";
+      renderHuntView();
+    } catch (e) {
+      $("#hunt-total").textContent = "—";
+      $("#hunt-summary").textContent = "検索エラー: " + e;
+    }
+  }
+
+  async function renderHuntView() {
+    const view = huntState.view;
+    const host = $("#hunt-view");
+    if (view === "list") return renderHuntList(host);
+    // Pivot views — fetch once per filter set + dim.
+    const dimMap = { by_rule: "rule_id", by_host: "computer",
+                     by_hour: "hour", by_level: "level" };
+    const dim = dimMap[view];
+    if (!dim) return;
+    if (!huntLastPivots[dim]) {
+      const params = buildHuntParams();
+      const r = await fetch(`/api/hunt/pivot?dim=${dim}&limit=200&` + params);
+      huntLastPivots[dim] = await r.json();
+    }
+    renderHuntPivot(host, dim, huntLastPivots[dim]);
+  }
+
+  function renderHuntList(host) {
+    if (!huntLastSearch || !huntLastSearch.detections.length) {
+      host.innerHTML = `<div class="muted small" style="padding:14px">
+        該当する検知はありません。条件を緩めるか「リセット」してください。</div>`;
+      return;
+    }
+    const rows = huntLastSearch.detections;
+    let html = `<table><thead><tr>
+      <th>時刻</th><th>レベル</th><th>ルール</th><th>ホスト</th>
+      <th>チャネル</th><th>EID</th><th>判定</th></tr></thead><tbody>`;
+    rows.forEach(ev => {
+      const lvl = (ev.Level || "info").toLowerCase();
+      html += `<tr data-job="${escapeHtml(ev._job_id)}" data-line="${ev._line_no}">
+        <td class="muted-cell">${escapeHtml(ev.Timestamp || "")}</td>
+        <td><span class="lvl lvl-${lvl}">${lvl.slice(0,4)}</span></td>
+        <td>${escapeHtml(ev.RuleTitle || "")}</td>
+        <td>${escapeHtml(ev.Computer || "")}</td>
+        <td class="muted-cell">${escapeHtml(ev.Channel || "")}</td>
+        <td>${ev.EventID || ""}</td>
+        <td>${verdictCellHtml(ev._verdict)}</td>
+      </tr>`;
+    });
+    html += "</tbody></table>";
+    if (rows.length < huntLastSearch.total) {
+      html += `<div class="muted small" style="padding:8px">
+        全 ${huntLastSearch.total.toLocaleString()} 件中、表示は ${rows.length} 件まで。
+        条件を絞るか CSV 出力で全件を取り出してください。</div>`;
+    }
+    host.innerHTML = html;
+    host.querySelectorAll("tbody tr").forEach(tr => {
+      tr.onclick = () => {
+        const tabBtn = document.querySelector('.tab[data-tab="results"]');
+        if (tabBtn) tabBtn.click();
+        setTimeout(() => openDetail(tr.dataset.job), 80);
+      };
+    });
+  }
+
+  function renderHuntPivot(host, dim, data) {
+    if (!data || !data.rows || !data.rows.length) {
+      host.innerHTML = `<div class="muted small" style="padding:14px">
+        集計するデータがありません。</div>`;
+      return;
+    }
+    const label = { rule_id: "ルール (RuleID)", computer: "ホスト",
+                    hour: "時間 (1時間粒度)", level: "重要度" }[dim];
+    const max = Math.max(...data.rows.map(r => r.n));
+    let html = `<table><thead><tr>
+      <th>${label}</th><th style="text-align:right">件数</th>
+      <th>分布</th><th style="text-align:right">crit/high</th>
+      </tr></thead><tbody>`;
+    data.rows.forEach(r => {
+      const pct = (r.n / max * 100).toFixed(1);
+      const key = (dim === "rule_id")
+        ? `<div>${escapeHtml(r.sample_title || "")}</div>
+           <div class="muted-cell" style="font-size:10.5px"><code>${escapeHtml(r.k || "")}</code></div>`
+        : `<code>${escapeHtml(r.k || "(空)")}</code>`;
+      html += `<tr>
+        <td>${key}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">${r.n.toLocaleString()}</td>
+        <td><div class="bar lvl-default" style="width:100%;height:10px;background:#1a1f2c;border-radius:3px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2))"></div>
+        </div></td>
+        <td style="text-align:right;color:var(--high)">${r.sev_count || 0}</td>
+      </tr>`;
+    });
+    html += "</tbody></table>";
+    host.innerHTML = html;
+  }
+
+  // --- saved searches (localStorage) ---
+  function loadSavedHunts() {
+    try { return JSON.parse(localStorage.getItem("hayabusa_hunts") || "[]"); }
+    catch { return []; }
+  }
+  function persistSavedHunts(list) {
+    localStorage.setItem("hayabusa_hunts", JSON.stringify(list));
+  }
+  function saveCurrentHunt() {
+    const name = prompt("この検索の名前を付けてください:", "");
+    if (!name) return;
+    const list = loadSavedHunts();
+    list.push({
+      name,
+      params: buildHuntParams().toString(),
+      view: huntState.view,
+      at: Date.now(),
+    });
+    persistSavedHunts(list);
+    renderSavedHunts();
+  }
+  function renderSavedHunts() {
+    const host = $("#hunt-saved");
+    const list = loadSavedHunts();
+    if (!list.length) {
+      host.innerHTML = `<span class="muted small">(まだありません)</span>`;
+      return;
+    }
+    host.innerHTML = list.map((h, i) => `
+      <div class="saved-row">
+        <a class="name" data-i="${i}">${escapeHtml(h.name)}</a>
+        <button class="del" data-i="${i}" title="削除">×</button>
+      </div>
+    `).join("");
+    host.querySelectorAll("a.name").forEach(a => {
+      a.onclick = (e) => {
+        e.preventDefault();
+        const h = loadSavedHunts()[a.dataset.i];
+        applyHuntParams(new URLSearchParams(h.params));
+        huntState.view = h.view || "list";
+        document.querySelectorAll(".hunt-tab").forEach(t =>
+          t.classList.toggle("active", t.dataset.view === huntState.view));
+        runHunt();
+      };
+    });
+    host.querySelectorAll("button.del").forEach(b => {
+      b.onclick = () => {
+        const list = loadSavedHunts();
+        list.splice(b.dataset.i, 1);
+        persistSavedHunts(list);
+        renderSavedHunts();
+      };
+    });
+  }
+  function applyHuntParams(params) {
+    resetHuntForm();
+    if (params.get("host")) $("#hunt-host").value = params.get("host");
+    if (params.get("channel")) $("#hunt-channel").value = params.get("channel");
+    if (params.get("eid")) $("#hunt-eid").value = params.get("eid");
+    if (params.get("q")) $("#hunt-q").value = params.get("q");
+    if (params.get("verdict")) $("#hunt-verdict").value = params.get("verdict");
+    if (params.get("include_suppressed") === "1") $("#hunt-include-suppressed").checked = true;
+    const levels = params.getAll("level");
+    document.querySelectorAll("#hunt-levels .chip-btn").forEach(c => {
+      c.classList.toggle("active", levels.includes(c.dataset.level));
+    });
+    if (params.get("from") || params.get("to")) {
+      $("#hunt-window").value = "custom";
+      $("#hunt-custom-range").hidden = false;
+      if (params.get("from")) $("#hunt-from").value = params.get("from");
+      if (params.get("to"))   $("#hunt-to").value = params.get("to");
+    }
+  }
+
+  function exportHuntCSV() {
+    const params = buildHuntParams();
+    // Trigger browser download by navigating to the export URL.
+    const url = "/api/hunt/export?" + params + "&limit=50000";
+    window.location.href = url;
+  }
+
+  // -------- dashboard --------
+  async function populateJobSelector() {
+    const sel = $("#dash-job");
+    const r = await fetch("/api/jobs");
+    const jobs = await r.json();
+    const current = sel.value;
+    sel.innerHTML = `<option value="">(全ジョブ)</option>`;
+    jobs.forEach(j => {
+      const opt = document.createElement("option");
+      opt.value = j.id;
+      opt.textContent = `${j.id}  —  ${fmtTime(j.started_at)}  (${j.detection_count}件)`;
+      sel.appendChild(opt);
+    });
+    if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+  }
+
+  async function loadDashboard() {
+    await populateJobSelector();
+    const job = $("#dash-job").value;
+    const bucket = $("#dash-bucket").value;
+    const incSup = $("#dash-suppressed").checked;
+    const qs = new URLSearchParams();
+    if (job) qs.set("job", job);
+    qs.set("bucket", bucket);
+    if (incSup) qs.set("include_suppressed", "1");
+    const r = await fetch(`/api/stats?${qs}`);
+    const d = await r.json();
+
+    $("#kpi-total").textContent = d.totals.detections.toLocaleString();
+    $("#kpi-crit").textContent = d.totals.critical_high.toLocaleString();
+    $("#kpi-hosts").textContent = d.totals.unique_computers.toLocaleString();
+    $("#kpi-rules").textContent = d.totals.unique_rules.toLocaleString();
+
+    HayCharts.donut($("#chart-donut"), d.by_level);
+    HayCharts.legend($("#donut-legend"),
+      HayCharts.LEVEL_ORDER.filter(k => d.by_level[k]));
+
+    const levels = HayCharts.stackedBars($("#chart-timeline"), d.timeline);
+    HayCharts.legend($("#timeline-legend"), levels);
+    const keys = Object.keys(d.timeline);
+    if (keys.length) {
+      $("#timeline-range").textContent = `${keys[0]} 〜 ${keys[keys.length-1]} (粒度: ${bucket})`;
+    } else {
+      $("#timeline-range").textContent = "";
+    }
+
+    renderBars($("#chart-rules"), d.top_rules.map(r => ({
+      label: r.rule_title || r.rule_id,
+      sublabel: r.level,
+      level: r.level,
+      count: r.n,
+    })));
+    renderBars($("#chart-hosts"), d.top_computers.map(c => ({
+      label: c.computer || "(不明)",
+      sublabel: `Critical+High: ${c.sev_count || 0}`,
+      count: c.n,
+    })));
+  }
+
+  function renderBars(container, items) {
+    container.innerHTML = "";
+    if (!items.length) {
+      container.innerHTML = `<div class="muted small">データがありません。</div>`;
+      return;
+    }
+    const max = Math.max(...items.map(i => i.count), 1);
+    items.forEach(item => {
+      const row = document.createElement("div");
+      row.className = "bar-row";
+      const cls = item.level ? `lvl-${item.level}` : "lvl-default";
+      const sub = item.sublabel
+        ? `<span class="muted small">${item.sublabel}</span>` : "";
+      row.innerHTML =
+        `<div class="label" title="${item.label}">${item.label} ${sub}</div>
+         <div class="bar ${cls}"><div style="width:${(item.count/max*100).toFixed(1)}%"></div></div>
+         <div class="count">${item.count.toLocaleString()}</div>`;
+      container.appendChild(row);
+    });
+  }
+
+  $("#dash-refresh").onclick = loadDashboard;
+  $("#dash-job").onchange = loadDashboard;
+  $("#dash-bucket").onchange = loadDashboard;
+  $("#dash-suppressed").onchange = loadDashboard;
+  // Recompute bar widths if the panel resizes (e.g. window resize while open).
+  window.addEventListener("resize", () => {
+    if ($("#tab-dashboard").classList.contains("active")) loadDashboard();
+  });
+
+  // boot
+  health(); refreshWorkspace(); refreshJobs(); updateScanButton(); loadSystemInfo();
+  setInterval(refreshWorkspace, 5000);
+})();

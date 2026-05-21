@@ -1,0 +1,64 @@
+title: PowerShell AMSI bypass — three-token reflection pattern
+id: ps-amsi-patch-triad
+status: stable
+description: |
+  Detects PowerShell ScriptBlocks (EID 4104) that contain ALL THREE of the
+  hallmark tokens used in nearly every public AMSI bypass: a reference to
+  `AmsiUtils` (the internal type), a reference to `amsiInitFailed` or
+  `amsiContext` (the field being overwritten), and a reflection emit /
+  GetType / GetField call (the method of overwriting). Public PoCs all
+  share this triad; obfuscation that breaks any leg also breaks the bypass.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://github.com/S3cur3Th1sSh1t/Amsi-Bypass-Powershell
+logsource:
+  product: windows
+  service: powershell
+  category: ps_script
+detection:
+  selection_channel:
+    Channel: 'Microsoft-Windows-PowerShell/Operational'
+    EventID: 4104
+  triad_amsiutils:
+    ScriptBlockText|contains:
+      - 'AmsiUtils'
+      - 'amsi.dll'              # alternative entry point
+  triad_field:
+    ScriptBlockText|contains:
+      - 'amsiInitFailed'
+      - 'amsiContext'
+      - 'amsiSession'
+  triad_reflection:
+    ScriptBlockText|contains:
+      - 'GetField('
+      - 'Reflection.Emit'
+      - 'GetType("System.Management.Automation'
+  filter_security_tooling:
+    # Sec-team red-team boxes / training labs. Tune with your own OU/SID.
+    User|contains: 'sec_redteam'
+  condition: selection_channel and triad_amsiutils and triad_field and triad_reflection and not filter_security_tooling
+falsepositives:
+  - Red team / pentest activity from authorised accounts (filter above).
+  - Security training material where the bypass is shown as text but not
+    actually executed; mitigate by also requiring Sysmon EID 1 of a
+    powershell.exe child within ±5s via correlate (see hayfx extension).
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+score:
+  base: 85
+  modifiers:
+    - if: ScriptBlockText|contains 'FromBase64String' then +5
+    - if: ScriptBlockText|contains 'IEX' then +5
+    - if: parent.Image|endswith '\explorer.exe' then +5     # human-initiated
+evasion: high
+notes: |
+  Bypass cost (attacker): HIGH — to drop ANY of the three tokens you must
+  switch to a non-reflection technique (e.g. patching amsi.dll directly
+  via WriteProcessMemory). That bypass IS detectable, but by a different
+  rule family (ETW Threat-Intelligence memory writes to amsi.dll text).
+  In other words: this rule forces attackers off the easy path onto a
+  harder, more loggable path.

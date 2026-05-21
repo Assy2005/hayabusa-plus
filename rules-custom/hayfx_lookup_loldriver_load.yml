@@ -1,0 +1,60 @@
+title: Known vulnerable driver loaded (LOLDrivers hash match)
+id: lookup-loldriver-load
+status: test
+description: |
+  Sysmon EID 6 (driver load) where the loaded driver's SHA-256 matches
+  an entry in the LOLDrivers feed. This is the canonical "BYOVD"
+  (Bring Your Own Vulnerable Driver) detection — attackers ship a
+  Microsoft-signed but exploitable driver to obtain kernel-level R/W
+  primitives and tamper with EDR / disable security products.
+
+  The match is computed against a hot-loaded lookup table, which means
+  the rule body doesn't grow as the feed grows. We update the file
+  rather than the rule.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://www.loldrivers.io/
+  - https://attack.mitre.org/techniques/T1068/
+  - https://attack.mitre.org/techniques/T1543/003/
+logsource:
+  product: windows
+  service: sysmon
+# hayabusa-fx extension: register lookup tables visible to the
+# selection block below. Tables are global per scan; multiple rules
+# may share the same name (last definition wins) so consider unique
+# names if you have many rule packs.
+lookup:
+  - name: lol_drivers
+    file: ../../../../lookups/loldrivers_sample.txt
+  - name: golden_drivers
+    file: ../../../../lookups/golden_image_hashes_sample.txt
+detection:
+  sel:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 6
+    Hashes|lookup: lol_drivers
+  # Allow-list: if the hash is also in golden, treat as known-good.
+  filter_golden:
+    Hashes|lookup: golden_drivers
+  condition: sel and not filter_golden
+falsepositives:
+  - Driver hashes that overlap between LOLDrivers and your golden image
+    (extremely rare; mitigate by curating the golden list).
+level: critical
+tags:
+  - attack.privilege_escalation
+  - attack.defense_evasion
+  - attack.t1068
+score:
+  base: 92
+evasion: medium
+notes: |
+  Bypass cost (attacker): MEDIUM.
+  - The feed only lists known-bad hashes. An attacker can repack the
+    driver, but the kernel rejects driver loads whose signatures don't
+    match Microsoft's catalogue — so most public BYOVD samples must
+    use the unmodified hash. Repacking + re-signing is expensive.
+  - The "Hashes" field in Sysmon EID 6 holds the IMPHASH or SHA-* —
+    we match via |contains|lookup so any of the formats inside
+    "MD5=...SHA256=...IMPHASH=..." works.

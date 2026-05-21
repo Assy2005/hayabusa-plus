@@ -1,0 +1,83 @@
+title: Volume Shadow Copy deletion attempt (multi-vector)
+id: af-vss-shadow-deletion
+status: stable
+description: |
+  Volume Shadow Copies are restore-point snapshots. Their deletion is
+  the most reliable single indicator of either:
+    (a) ransomware preparing to encrypt (so the user can't roll back), or
+    (b) an attacker erasing forensic artefacts captured in snapshots.
+  We catch the 4 most-used deletion vectors: vssadmin, wmic, diskshadow,
+  and WMI via PowerShell. Each is rare-to-absent in normal enterprise
+  workflows; the false-positive rate is among the lowest of any rule
+  in this set.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1490/
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  sel_vssadmin:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\vssadmin.exe'
+    CommandLine|contains|all:
+      - 'delete'
+      - 'shadows'
+  sel_wmic:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\wmic.exe'
+    CommandLine|contains|all:
+      - 'shadowcopy'
+      - 'delete'
+  sel_diskshadow:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\diskshadow.exe'
+    CommandLine|contains: 'delete shadows'
+  sel_ps_wmi:
+    Channel: 'Microsoft-Windows-PowerShell/Operational'
+    EventID: 4104
+    ScriptBlockText|contains|all:
+      - 'Win32_ShadowCopy'
+    # Either WMI removal verb suffices.
+    ScriptBlockText|contains:
+      - 'Remove-WmiObject'
+      - 'Remove-CimInstance'
+      - '.Delete()'
+  sel_bcdedit:
+    # Often paired with VSS removal in ransomware: disabling boot recovery.
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\bcdedit.exe'
+    CommandLine|contains|all:
+      - 'recoveryenabled'
+      - 'no'
+  condition: 1 of sel_*
+falsepositives:
+  - Backup vendor agents that rotate shadow copies. Allow-list by parent
+    image (e.g. \backupagent.exe) and signer.
+  - Disk maintenance scripts. Confirm by user context.
+level: critical
+tags:
+  - attack.impact
+  - attack.t1490
+score:
+  base: 92
+  modifiers:
+    - if: corroborated_within(10m, ['af-wevtutil-clear', 'af-eventlog-service-tamper']) then +5
+    - if: parent.Image|endswith '\explorer.exe' then +5
+evasion: low
+notes: |
+  Bypass cost (attacker): LOW for any one vector, HIGH to silently
+  achieve the outcome.
+  - The attacker can move between vectors (vssadmin → diskshadow →
+    direct VSS COM API). This rule already covers the four CLI paths;
+    the COM path is caught by Sysmon EID 7 (image load of vssapi.dll
+    in an unusual process) but that's covered by a separate behavioural
+    rule out of scope here.
+  - bcdedit /set recoveryenabled No is intentionally bundled — it
+    almost always co-occurs with VSS deletion in ransomware and is
+    a strong corroborating signal.

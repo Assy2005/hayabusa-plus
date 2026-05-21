@@ -1,0 +1,62 @@
+# ============================================================
+# Hayabusa-FX (hayabusa-plus) — gitignore
+# ============================================================
+
+# ── 実行ファイル・バイナリ ──
+# 公式ビルドや fork のビルド成果物はリポジトリに含めず GitHub Release で配布する。
+bin/*.exe
+bin/hayabusa
+bin/hayabusa-*
+
+# Hayabusa 公式 zip 同梱のルールツリーと設定 (~60MB)。
+# bin/ は実行時に「公式 zip を展開してここに置く」ものとして扱う。
+bin/rules/
+bin/config/
+
+# Rust ビルド成果物
+engine/target/
+engine/Cargo.lock.bak
+**/*.rs.bk
+
+# ── ランタイム / 解析データ ──
+# 個別解析の出力・SQLite キャッシュ・EVTX サンプル等は履歴に残さない。
+workspace/
+logs/
+
+# Lookup テーブルは README に書いた "サンプル" だけ含める。
+# 運用で蓄積される TP/FP 履歴は per-team の機密データなので除外。
+lookups/fp_history/
+
+# ── OS / IDE ──
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+~$*
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ── DB ローカルキャッシュ (workspace/ 配下なので冗長だが念のため) ──
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# ── 一時 ──
+*.tmp
+*.bak
+*~
+
+# ── 大きな or 一時的な EVTX 単独配置を防止 ──
+# (チェックインしたい場合は明示的に -f を付ける)
+*.evtx
+*.json.tmp

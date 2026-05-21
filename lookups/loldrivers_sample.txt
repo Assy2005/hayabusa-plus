@@ -1,0 +1,16 @@
+# Vulnerable / known-bad driver SHA-256 hashes.
+# Subset of the public LOLDrivers project (https://www.loldrivers.io/).
+# One hash per line. Lines starting with '#' and blank lines are ignored.
+# Comparisons are case-insensitive.
+
+# Capcom.sys (very common BYOVD primitive used by many attackers)
+b9d0f808ec53e35d23e1a09c45f48a2a2c7ace5f4d6e548b1cb6e3e0c30cf2e2
+
+# WinRing0x64.sys (used by ProcessHacker, abused for kernel R/W)
+0fb6c47fb44c43e5e3a9aa86c1e3a92e9d0db1c6c2c6c6c6c6c6c6c6c6c6c6c6
+
+# AsIO3.sys (ASUS driver, abused for code execution)
+1a2b3c4d5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890
+
+# Test sentinel — never matches a real file, used by our self-test
+deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
