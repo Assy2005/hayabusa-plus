@@ -1286,7 +1286,7 @@ console.log("[app] app.js v2026-05-21-c executing");
       const d = await r.json();
       const tb = $("#lookups-table tbody"); tb.innerHTML = "";
       if (!d.lookups.length) {
-        tb.innerHTML = `<tr><td colspan="4" class="muted small">
+        tb.innerHTML = `<tr><td colspan="5" class="muted small">
           lookups/ ディレクトリに表が見つかりません。<code>name.txt</code>
           形式のファイルを置き、ルールから <code>lookup:</code> ブロックで
           参照してください。</td></tr>`;
@@ -1297,9 +1297,25 @@ console.log("[app] app.js v2026-05-21-c executing");
         const refs = it.referenced_by && it.referenced_by.length
           ? it.referenced_by.length + " 件"
           : `<span class="muted small">参照なし</span>`;
+        // Feed metadata column: when the lookup is fed by feeds.yml, show
+        // last-fetch timestamp; otherwise show '—' (e.g. for the manually
+        // curated sample files).
+        let feedCell = `<span class="muted small">手動管理</span>`;
+        if (it.feed_meta) {
+          const at = it.feed_meta.fetched_at;
+          const when = at ? new Date(at * 1000).toLocaleString("ja-JP") : "?";
+          if (it.feed_meta.error) {
+            feedCell = `<span class="feed-error" title="${escapeHtml(it.feed_meta.error)}">⚠ ${escapeHtml(it.feed_meta.error.slice(0, 30))}</span><br/>
+              <span class="feed-fetch-time">${when}</span>`;
+          } else {
+            feedCell = `<span class="feed-ok">✓ ${it.feed_meta.entries} 件</span><br/>
+              <span class="feed-fetch-time">${when}</span>`;
+          }
+        }
         tr.innerHTML = `<td><code>${it.name}</code></td>
           <td class="mono"><span title="${it.rel}">${it.filename}</span></td>
           <td>${it.entries.toLocaleString()}</td>
+          <td>${feedCell}</td>
           <td>${refs}</td>`;
         if (it.referenced_by && it.referenced_by.length) {
           tr.title = "参照しているルール:\n" + it.referenced_by.join("\n");
@@ -1308,6 +1324,40 @@ console.log("[app] app.js v2026-05-21-c executing");
       });
     } catch { /* ignore */ }
   }
+
+  // Wire the "フィードを更新" button. Hits the server's refresh endpoint
+  // which forwards to feed_fetcher.fetch_all() synchronously. For huge
+  // feeds (URLhaus is ~4 MB / 78k entries) this can take a few seconds —
+  // we disable the button and show progress text.
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("#refresh-feeds-btn");
+    if (!btn) return;
+    const status = $("#refresh-feeds-status");
+    btn.disabled = true;
+    btn.textContent = "取得中…";
+    status.textContent = "全フィードを順次取得しています…";
+    try {
+      const r = await fetch("/api/lookups/refresh", { method: "POST" });
+      const d = await r.json();
+      if (d.error) {
+        status.innerHTML = `<span class="feed-error">エラー: ${escapeHtml(d.error)}</span>`;
+      } else {
+        const ok = d.ok || 0, fail = d.fail || 0;
+        const detail = (d.results || []).map(r => {
+          if (r.error) return `${r.name || r.output}: ✗ ${r.error}`;
+          return `${r.name || r.output}: ${r.entries} 件 (${r.elapsed_sec}s)`;
+        }).join(" / ");
+        status.innerHTML = `<span class="feed-ok">完了: ${ok} 成功 / ${fail} 失敗</span> ・ <span class="muted small">${escapeHtml(detail)}</span>`;
+      }
+      // Re-render with new metadata.
+      loadLookups();
+    } catch (e) {
+      status.innerHTML = `<span class="feed-error">通信エラー: ${escapeHtml(String(e))}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "フィードを更新";
+    }
+  });
 
   // -------- ハント (threat hunting) --------
   // We split this out of the dashboard / results paths because the

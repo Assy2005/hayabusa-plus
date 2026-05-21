@@ -43,6 +43,7 @@ import store as _store  # noqa: E402
 import rule_index as _rule_index  # noqa: E402
 import process_tree as _process_tree  # noqa: E402
 import behavioral as _behavioral  # noqa: E402
+import feed_fetcher as _feed_fetcher  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 GUI_DIR = ROOT / "gui"
@@ -869,8 +870,21 @@ class Handler(BaseHTTPRequestHandler):
                         "rel": str(p.relative_to(ROOT)).replace("\\", "/"),
                         "size": p.stat().st_size,
                     })
+            # Annotate each lookup with feed-fetch metadata (last fetch
+            # time, entry count, error) when present.
+            try:
+                meta_map = _feed_fetcher.load_meta(LOOKUPS_DIR)
+            except Exception:  # noqa: BLE001
+                meta_map = {}
+            for it in items:
+                # The lookup name in rules vs the feed name in feeds.yml
+                # are usually the same (we recommend it in feeds.yml).
+                m = meta_map.get(it["name"])
+                if m:
+                    it["feed_meta"] = m
             self._send_json({"lookups": items, "unbound_files": unbound_files,
-                             "dir": str(LOOKUPS_DIR)})
+                             "dir": str(LOOKUPS_DIR),
+                             "feeds": list(meta_map.values())})
             return
 
         if path == "/api/rule_feedback":
@@ -967,6 +981,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, 400)
                 return
             self._send_json({"id": sid}, 201)
+            return
+
+        if path == "/api/lookups/refresh":
+            # Trigger feed fetch. Synchronous because the GUI shows a
+            # spinner; for cron-like background refresh use the CLI.
+            try:
+                params = self._read_json() if self.headers.get("Content-Length") else {}
+            except ValueError:
+                params = {}
+            names = params.get("feeds") or None
+            try:
+                results = _feed_fetcher.fetch_all(
+                    LOOKUPS_DIR, filter_names=names)
+                self._send_json({"results": results,
+                                 "ok": sum(1 for r in results if not r.get("error")),
+                                 "fail": sum(1 for r in results if r.get("error"))})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
             return
 
         if path == "/api/system/import":

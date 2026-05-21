@@ -181,6 +181,10 @@ button.primary:hover{background:var(--accent-2);border-color:var(--accent-2);col
 .anom-num{font-variant-numeric:tabular-nums;text-align:right;
   font-weight:600;color:var(--accent-2)}
 .anom-target{font-family:ui-monospace,Consolas,monospace;font-size:11px}
+.lookups-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.feed-fetch-time{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.feed-error{color:var(--bad);font-size:10.5px}
+.feed-ok{color:var(--ok);font-size:10.5px}
 .feed .row{padding:2px 4px;border-bottom:1px solid #131826;display:grid;
   grid-template-columns:135px 60px 1fr 140px;gap:8px;align-items:baseline}
 .feed .row:hover{background:#101524}

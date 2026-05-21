@@ -60,3 +60,8 @@ __pycache__/
 # (チェックインしたい場合は明示的に -f を付ける)
 *.evtx
 *.json.tmp
+/lookups/loldrivers.txt
+/lookups/malware_bazaar_sha256.txt
+/lookups/urlhaus_urls.txt
+/lookups/feodo_c2_ips.txt
+/lookups/*.meta.json
