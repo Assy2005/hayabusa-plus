@@ -17,6 +17,7 @@
       <button data-tab="dashboard" class="tab">ダッシュボード</button>
       <button data-tab="results" class="tab">結果</button>
       <button data-tab="hunt" class="tab">ハント</button>
+      <button data-tab="hosts" class="tab">ホスト</button>
       <button data-tab="rules" class="tab">ルール</button>
       <button data-tab="about" class="tab">情報</button>
     </nav>
@@ -505,6 +506,57 @@
             </div>
           </div>
           <div id="hunt-view" class="hunt-view scroll-y"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ホスト資産ビュー -->
+    <section id="tab-hosts" class="tab-panel">
+      <div class="card hosts-overview">
+        <div class="hosts-head">
+          <h2>ホスト資産</h2>
+          <div class="muted small">
+            検知データから自動生成。リスクスコアは
+            <code>critical×10 + high×5 + medium×2 + low×1</code> に
+            TP/FP フィードバックと直近度補正を掛け、log 圧縮で 0–100 にスケール。
+          </div>
+          <div>
+            <label class="row inline"><input type="checkbox" id="hosts-include-suppressed" />
+              <span>抑制済みも含める</span></label>
+            <button id="hosts-refresh" class="ghost-btn small">更新</button>
+          </div>
+        </div>
+        <table id="hosts-table">
+          <thead><tr>
+            <th>ホスト</th><th>リスク</th><th>検知数</th>
+            <th>Crit</th><th>High</th><th>Med</th>
+            <th>ジョブ</th><th>初検知</th><th>最終検知</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="card" id="host-detail-card" hidden>
+        <div class="host-detail-head">
+          <h2 id="host-detail-name">—</h2>
+          <button id="host-detail-close" class="ghost-btn small">閉じる</button>
+        </div>
+        <div class="host-detail-grid">
+          <div>
+            <h3>リスク内訳</h3>
+            <div id="host-detail-summary"></div>
+            <h3>TOP ルール (このホスト)</h3>
+            <div id="host-detail-rules"></div>
+          </div>
+          <div>
+            <h3>検出チャネル</h3>
+            <div id="host-detail-channels"></div>
+            <h3>時系列 (1 時間粒度)</h3>
+            <div id="host-detail-timeline" class="chart-host"></div>
+            <div id="host-detail-actions" class="hunt-actions">
+              <button id="host-pivot-hunt">このホストでハント検索 →</button>
+            </div>
+          </div>
         </div>
       </div>
     </section>

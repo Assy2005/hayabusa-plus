@@ -655,6 +655,174 @@ class Store:
             out.setdefault(r["bucket"], {})[r["level"] or "unknown"] = r["n"]
         return out
 
+    # =================================================================
+    #  Host asset view (Step 10)
+    # =================================================================
+    # The store is the cheapest place to compute per-host aggregates: a
+    # single GROUP BY over the existing detections table gives us totals,
+    # severity breakdowns, last-seen, and a feeds-into-risk-score number
+    # all at once. The risk score weighting is exposed as a constant so
+    # the UI can show the same formula in a tooltip.
+
+    # Severity weight applied to a single detection of that level. The
+    # ratios encode "one critical equals five mediums" — calibrated on
+    # the local corpus to keep the distribution interpretable in 0..100.
+    RISK_WEIGHTS = {
+        "critical": 10.0,
+        "high":      5.0,
+        "medium":    2.0,
+        "low":       1.0,
+        "informational": 0.1,
+    }
+
+    def host_summary(self, include_suppressed: bool = False) -> list[dict]:
+        """One row per `computer` with detection counts + risk score."""
+        join = self._SUPP_JOIN
+        where = " WHERE d.computer IS NOT NULL"
+        if not include_suppressed:
+            where += " AND s.id IS NULL"
+        sql = (
+            "SELECT d.computer AS host, "
+            "       COUNT(DISTINCT d.job_id || ':' || d.line_no) AS total, "
+            "       SUM(CASE WHEN d.level='critical' THEN 1 ELSE 0 END) AS critical_n, "
+            "       SUM(CASE WHEN d.level='high'     THEN 1 ELSE 0 END) AS high_n, "
+            "       SUM(CASE WHEN d.level='medium'   THEN 1 ELSE 0 END) AS medium_n, "
+            "       SUM(CASE WHEN d.level='low'      THEN 1 ELSE 0 END) AS low_n, "
+            "       SUM(CASE WHEN d.level='informational' THEN 1 ELSE 0 END) AS info_n, "
+            "       SUM(CASE WHEN d.verdict='tp' THEN 1 ELSE 0 END) AS tp_n, "
+            "       SUM(CASE WHEN d.verdict='fp' THEN 1 ELSE 0 END) AS fp_n, "
+            "       COUNT(DISTINCT d.rule_id) AS rules_seen, "
+            "       COUNT(DISTINCT d.job_id) AS jobs, "
+            "       MIN(d.ts) AS first_seen, "
+            "       MAX(d.ts) AS last_seen "
+            f"FROM detections d{join}{where} "
+            "GROUP BY d.computer ORDER BY total DESC")
+        rows = [dict(r) for r in self._conn().execute(sql)]
+        for r in rows:
+            r["risk_score"] = self._risk_score(r)
+        # Sort by risk descending so the riskiest host bubbles to the top.
+        rows.sort(key=lambda r: r["risk_score"], reverse=True)
+        return rows
+
+    @classmethod
+    def _risk_score(cls, row: dict) -> float:
+        """Compute a normalised 0–100 risk score from per-host aggregates.
+
+        Weighted sum of severity counts, with three modifiers:
+          * `tp_factor`  — analyst-confirmed TPs are worth more, confirmed
+            FPs subtract. Hosts where the analyst has signed off as
+            "all FP" naturally drop near zero.
+          * `recency_factor` — last_seen within 7 days bumps the score
+            (active threat is worse than stale one).
+          * The total is log-compressed so a host with 1000 detections
+            isn't 1000× a host with 1; the visual range stays usable.
+        """
+        import math
+        raw = (
+              row.get("critical_n", 0) * cls.RISK_WEIGHTS["critical"]
+            + row.get("high_n", 0)     * cls.RISK_WEIGHTS["high"]
+            + row.get("medium_n", 0)   * cls.RISK_WEIGHTS["medium"]
+            + row.get("low_n", 0)      * cls.RISK_WEIGHTS["low"]
+            + row.get("info_n", 0)     * cls.RISK_WEIGHTS["informational"]
+        )
+        # TP/FP feedback adjustment. Symmetric: each confirmed TP doubles
+        # weight, each confirmed FP halves it. Bounded.
+        tp = row.get("tp_n") or 0
+        fp = row.get("fp_n") or 0
+        tp_factor = 1.0 + min(tp * 0.05, 1.0) - min(fp * 0.05, 0.8)
+        tp_factor = max(0.2, tp_factor)
+
+        # Recency factor.
+        recency_factor = 1.0
+        last = row.get("last_seen")
+        if last:
+            import time, datetime
+            try:
+                last_dt = cls._parse_iso(last)
+                if last_dt.tzinfo:
+                    age_days = (datetime.datetime.now(last_dt.tzinfo) - last_dt).days
+                else:
+                    age_days = (datetime.datetime.now() - last_dt).days
+                if age_days <= 1:
+                    recency_factor = 1.5
+                elif age_days <= 7:
+                    recency_factor = 1.2
+                elif age_days > 60:
+                    recency_factor = 0.7
+            except (ValueError, TypeError):
+                pass
+
+        scaled = raw * tp_factor * recency_factor
+        # log-compress and clip to 0..100.
+        compressed = 20.0 * math.log10(1.0 + scaled)
+        return round(min(100.0, max(0.0, compressed)), 1)
+
+    def host_detail(self, computer: str, include_suppressed: bool = False) -> dict:
+        """Per-host drill-down: timeline, top rules, ATT&CK distribution.
+
+        We hand back enough JSON for the GUI to render the whole detail
+        panel without further round-trips.
+        """
+        join = self._SUPP_JOIN
+        where = " WHERE d.computer = ?"
+        params: list = [computer]
+        if not include_suppressed:
+            where += " AND s.id IS NULL"
+        c = self._conn()
+
+        # Summary row reuses host_summary's formula by computing on one row.
+        summary_sql = (
+            "SELECT d.computer AS host, "
+            "       COUNT(DISTINCT d.job_id || ':' || d.line_no) AS total, "
+            "       SUM(CASE WHEN d.level='critical' THEN 1 ELSE 0 END) AS critical_n, "
+            "       SUM(CASE WHEN d.level='high'     THEN 1 ELSE 0 END) AS high_n, "
+            "       SUM(CASE WHEN d.level='medium'   THEN 1 ELSE 0 END) AS medium_n, "
+            "       SUM(CASE WHEN d.level='low'      THEN 1 ELSE 0 END) AS low_n, "
+            "       SUM(CASE WHEN d.level='informational' THEN 1 ELSE 0 END) AS info_n, "
+            "       SUM(CASE WHEN d.verdict='tp' THEN 1 ELSE 0 END) AS tp_n, "
+            "       SUM(CASE WHEN d.verdict='fp' THEN 1 ELSE 0 END) AS fp_n, "
+            "       COUNT(DISTINCT d.rule_id) AS rules_seen, "
+            "       COUNT(DISTINCT d.job_id) AS jobs, "
+            "       MIN(d.ts) AS first_seen, "
+            "       MAX(d.ts) AS last_seen "
+            f"FROM detections d{join}{where}")
+        row = c.execute(summary_sql, params).fetchone()
+        summary = dict(row) if row else {"host": computer, "total": 0}
+        summary["risk_score"] = self._risk_score(summary)
+
+        # Top 10 rules on this host.
+        top_rules = list(c.execute(
+            "SELECT d.rule_id, d.rule_title, d.level, "
+            "       COUNT(*) AS n "
+            f"FROM detections d{join}{where} "
+            "GROUP BY d.rule_id ORDER BY n DESC LIMIT 10", params))
+
+        # 24-bucket hourly timeline for the last week (approx). We bucket
+        # by 'YYYY-MM-DDTHH' substring — same trick as the dashboard.
+        timeline = list(c.execute(
+            "SELECT substr(d.ts, 1, 13) AS bucket, d.level, "
+            "       COUNT(DISTINCT d.job_id || ':' || d.line_no) AS n "
+            f"FROM detections d{join}{where} AND d.ts IS NOT NULL "
+            "GROUP BY bucket, d.level ORDER BY bucket DESC LIMIT 168 * 5",
+            params))
+        pivoted: dict[str, dict] = {}
+        for r in timeline:
+            pivoted.setdefault(r["bucket"], {})[r["level"] or "unknown"] = r["n"]
+
+        # Top channels (which providers actually fired)
+        top_channels = list(c.execute(
+            "SELECT d.channel, COUNT(*) AS n "
+            f"FROM detections d{join}{where} AND d.channel IS NOT NULL "
+            "GROUP BY d.channel ORDER BY n DESC LIMIT 8", params))
+
+        return {
+            "host": computer,
+            "summary": summary,
+            "top_rules": [dict(r) for r in top_rules],
+            "top_channels": [dict(r) for r in top_channels],
+            "timeline": pivoted,
+        }
+
     def rule_feedback(self) -> list[sqlite3.Row]:
         c = self._conn()
         return list(c.execute(

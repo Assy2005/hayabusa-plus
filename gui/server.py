@@ -753,6 +753,32 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/hosts":
+            qs = parse_qs(u.query)
+            inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
+            try:
+                rows = STORE.host_summary(include_suppressed=inc)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json({"hosts": rows, "total": len(rows),
+                             "risk_weights": STORE.RISK_WEIGHTS})
+            return
+
+        m = re.match(r"^/api/hosts/([^/]+)$", path)
+        if m:
+            # The hostname might contain anything Windows allows; URL-decode it.
+            computer = unquote(m.group(1))
+            qs = parse_qs(u.query)
+            inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
+            try:
+                detail = STORE.host_detail(computer, include_suppressed=inc)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json(detail)
+            return
+
         if path == "/api/behavioral/anomalies":
             qs = parse_qs(u.query)
             top = min(int(qs.get("top", ["50"])[0]), 500)
@@ -1452,14 +1478,16 @@ def main():
         # The most common cause of "browser shows the OLD server" is a
         # zombie that grabbed the preferred port. Be very loud about it
         # so the launcher script can show a usable error.
+        # We deliberately avoid emoji here because Python on Windows-jp
+        # defaults stdout to cp932 which cannot encode astral characters.
         holder = _holder_of_port(preferred)
-        print(f"\n  ⚠️  Preferred port {preferred} is already in use.")
+        print(f"\n  [WARN] Preferred port {preferred} is already in use.")
         if holder:
-            print(f"  ⚠️  Holder: PID {holder} (run 'taskkill /PID {holder} /F'")
-            print(f"             or use Task Manager; may need Administrator).")
-        print(f"  ⚠️  Falling back to a random port. The launcher will open")
-        print(f"  ⚠️  the correct URL automatically. If you started the browser")
-        print(f"  ⚠️  manually, use the URL below — not http://127.0.0.1:{preferred}/.\n")
+            print(f"  [WARN] Holder: PID {holder} (run 'taskkill /PID {holder} /F'")
+            print(f"         or use Task Manager; may need Administrator).")
+        print(f"  [WARN] Falling back to a random port. The launcher will open")
+        print(f"  [WARN] the correct URL automatically. If you started the browser")
+        print(f"  [WARN] manually, use the URL below - not http://127.0.0.1:{preferred}/.\n")
 
     url = f"http://{host}:{port}"
     print(f"  Listen : {url}\n", flush=True)

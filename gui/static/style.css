@@ -527,3 +527,43 @@ footer.status-bar .dot.bad{background:var(--bad)}
 footer.status-bar .sep{color:var(--line-strong)}
 footer.status-bar .right{margin-left:auto;display:flex;gap:10px}
 
+
+/* === ホスト資産ビュー === */
+#tab-hosts{overflow:hidden}
+.hosts-overview{flex:0 0 auto;max-height:55vh;overflow:auto}
+.hosts-head{display:grid;grid-template-columns:auto 1fr auto;gap:14px;
+  align-items:center;flex-wrap:wrap}
+.hosts-head h2{margin:0}
+#hosts-table{font-size:12px;width:100%}
+#hosts-table th{font-size:10.5px}
+#hosts-table tbody tr{cursor:pointer}
+#hosts-table tbody tr:hover{background:#171c2a}
+#hosts-table .host-name{font-family:ui-monospace,Consolas,monospace;font-weight:500}
+#hosts-table .risk-cell{display:flex;align-items:center;gap:6px;min-width:160px}
+#hosts-table .risk-bar{flex:1;height:8px;background:#1a1f2c;border-radius:4px;
+  overflow:hidden;min-width:60px}
+#hosts-table .risk-bar > div{height:100%;border-radius:4px}
+#hosts-table .risk-score{font-variant-numeric:tabular-nums;font-weight:600;
+  min-width:42px;text-align:right}
+.risk-very-high{color:var(--crit)} .risk-very-high-bar{background:var(--crit)}
+.risk-high     {color:var(--high)} .risk-high-bar     {background:var(--high)}
+.risk-med      {color:var(--med)}  .risk-med-bar      {background:var(--med)}
+.risk-low      {color:var(--low)}  .risk-low-bar      {background:var(--low)}
+.risk-info     {color:var(--muted)}.risk-info-bar    {background:#5a6378}
+
+#host-detail-card{flex:1 1 auto;min-height:0;overflow:auto}
+.host-detail-head{display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid var(--line);padding-bottom:8px}
+.host-detail-head h2{margin:0;font-family:ui-monospace,Consolas,monospace;
+  font-size:14px;color:var(--accent-2)}
+.host-detail-grid{display:grid;grid-template-columns:1fr 1.4fr;gap:18px}
+@media (max-width:900px){.host-detail-grid{grid-template-columns:1fr}}
+.host-detail-grid h3{font-size:11px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.5px;margin:10px 0 6px 0}
+.host-stat-row{display:grid;grid-template-columns:1fr auto;gap:8px;
+  font-size:12px;padding:4px 0;border-bottom:1px solid #131826}
+.host-stat-row.lvl-critical span:last-child{color:var(--crit);font-weight:600}
+.host-stat-row.lvl-high     span:last-child{color:var(--high);font-weight:600}
+.host-stat-row.lvl-medium   span:last-child{color:var(--med);font-weight:600}
+.host-stat-row.lvl-low      span:last-child{color:var(--low)}
+.host-stat-row.lvl-informational span:last-child{color:var(--muted)}

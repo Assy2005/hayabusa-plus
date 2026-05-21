@@ -28,6 +28,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (t.dataset.tab === "rules") { loadRules(); loadFeedback(); loadSuppressions(); loadLookups(); }
     if (t.dataset.tab === "dashboard") loadDashboard();
     if (t.dataset.tab === "hunt") initHunt();
+    if (t.dataset.tab === "hosts") loadHosts();
   });
 
   // -------- health --------
@@ -1888,6 +1889,157 @@ console.log("[app] app.js v2026-05-21-c executing");
   // Recompute bar widths if the panel resizes (e.g. window resize while open).
   window.addEventListener("resize", () => {
     if ($("#tab-dashboard").classList.contains("active")) loadDashboard();
+  });
+
+  // -------- ホスト資産ビュー (tab=hosts) --------
+
+  // Map a risk score (0..100) onto a band + colour class. The thresholds
+  // are calibrated so the table can be read at a glance: "anything above
+  // 70 is somebody to investigate today".
+  function riskBand(score) {
+    if (score >= 70) return {label: "very-high", cls: "risk-very-high"};
+    if (score >= 50) return {label: "high",      cls: "risk-high"};
+    if (score >= 30) return {label: "med",       cls: "risk-med"};
+    if (score >= 10) return {label: "low",       cls: "risk-low"};
+    return {label: "info", cls: "risk-info"};
+  }
+
+  async function loadHosts() {
+    const tb = $("#hosts-table tbody");
+    if (!tb) return;
+    tb.innerHTML = `<tr><td colspan="10" class="muted small">読込中…</td></tr>`;
+    try {
+      const inc = $("#hosts-include-suppressed").checked ? "1" : "0";
+      const r = await fetch(`/api/hosts?include_suppressed=${inc}`);
+      const d = await r.json();
+      tb.innerHTML = "";
+      if (d.error) {
+        tb.innerHTML = `<tr><td colspan="10" class="muted small">エラー: ${escapeHtml(d.error)}</td></tr>`;
+        return;
+      }
+      if (!d.hosts.length) {
+        tb.innerHTML = `<tr><td colspan="10" class="empty-state">
+          <div class="icon">🖥️</div>
+          <div class="title">ホストが見つかりません</div>
+          まずスキャンタブから EVTX を取り込んでください。
+        </td></tr>`;
+        return;
+      }
+      d.hosts.forEach(h => {
+        const band = riskBand(h.risk_score);
+        const tr = document.createElement("tr");
+        tr.dataset.host = h.host;
+        tr.innerHTML = `
+          <td class="host-name">${escapeHtml(h.host)}</td>
+          <td><div class="risk-cell">
+            <div class="risk-bar"><div class="${band.cls}-bar" style="width:${h.risk_score}%"></div></div>
+            <span class="risk-score ${band.cls}">${h.risk_score.toFixed(1)}</span>
+          </div></td>
+          <td class="risk-score">${h.total.toLocaleString()}</td>
+          <td><span class="lvl lvl-critical">${h.critical_n || 0}</span></td>
+          <td><span class="lvl lvl-high">${h.high_n || 0}</span></td>
+          <td><span class="lvl lvl-medium">${h.medium_n || 0}</span></td>
+          <td>${h.jobs}</td>
+          <td class="muted-cell">${escapeHtml((h.first_seen || "").slice(0, 16))}</td>
+          <td class="muted-cell">${escapeHtml((h.last_seen || "").slice(0, 16))}</td>
+          <td><button class="ghost-btn small" data-host="${escapeHtml(h.host)}">詳細 →</button></td>
+        `;
+        tr.querySelector("button").onclick = (e) => {
+          e.stopPropagation();
+          openHostDetail(h.host);
+        };
+        tr.onclick = () => openHostDetail(h.host);
+        tb.appendChild(tr);
+      });
+    } catch (e) {
+      tb.innerHTML = `<tr><td colspan="10" class="muted small">
+        通信エラー: ${escapeHtml(String(e))}
+      </td></tr>`;
+    }
+  }
+
+  async function openHostDetail(host) {
+    const card = $("#host-detail-card");
+    card.hidden = false;
+    $("#host-detail-name").textContent = host;
+    $("#host-detail-summary").innerHTML = `<div class="muted small">読込中…</div>`;
+    $("#host-detail-rules").innerHTML = "";
+    $("#host-detail-channels").innerHTML = "";
+    $("#host-detail-timeline").innerHTML = "";
+    try {
+      const r = await fetch(`/api/hosts/${encodeURIComponent(host)}`);
+      const d = await r.json();
+      if (d.error) {
+        $("#host-detail-summary").innerHTML = `<div class="muted small">エラー: ${escapeHtml(d.error)}</div>`;
+        return;
+      }
+      const s = d.summary;
+      const last7d = s.last_seen ? new Date() - new Date(s.last_seen.slice(0, 19)) : null;
+      const ageStr = last7d == null ? "—"
+        : last7d < 86400000 ? "1日以内" :
+          last7d < 86400000*7 ? Math.floor(last7d/86400000) + "日前" :
+          Math.floor(last7d/86400000) + "日前";
+
+      $("#host-detail-summary").innerHTML = `
+        <div class="host-stat-row"><span>リスクスコア</span><span class="${riskBand(s.risk_score).cls}">${s.risk_score.toFixed(1)} / 100</span></div>
+        <div class="host-stat-row lvl-critical"><span>critical</span><span>${s.critical_n || 0}</span></div>
+        <div class="host-stat-row lvl-high"><span>high</span><span>${s.high_n || 0}</span></div>
+        <div class="host-stat-row lvl-medium"><span>medium</span><span>${s.medium_n || 0}</span></div>
+        <div class="host-stat-row lvl-low"><span>low</span><span>${s.low_n || 0}</span></div>
+        <div class="host-stat-row lvl-informational"><span>info</span><span>${s.info_n || 0}</span></div>
+        <div class="host-stat-row"><span>TP / FP 判定</span><span>${s.tp_n || 0} / ${s.fp_n || 0}</span></div>
+        <div class="host-stat-row"><span>発火ルール種数</span><span>${s.rules_seen || 0}</span></div>
+        <div class="host-stat-row"><span>スキャンジョブ数</span><span>${s.jobs || 0}</span></div>
+        <div class="host-stat-row"><span>最終検知</span><span>${escapeHtml((s.last_seen || "—").slice(0, 19))} (${ageStr})</span></div>
+        <div class="host-stat-row"><span>初検知</span><span>${escapeHtml((s.first_seen || "—").slice(0, 19))}</span></div>
+      `;
+      // TOP rules
+      const rulesHost = $("#host-detail-rules");
+      d.top_rules.forEach(r => {
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        const cls = r.level ? `lvl-${r.level}` : "lvl-default";
+        row.innerHTML = `<div class="label" title="${escapeHtml(r.rule_title || r.rule_id)}">${escapeHtml(r.rule_title || r.rule_id)}</div>
+          <div class="bar ${cls}"><div style="width:${(r.n / d.top_rules[0].n * 100).toFixed(1)}%"></div></div>
+          <div class="count">${r.n.toLocaleString()}</div>`;
+        rulesHost.appendChild(row);
+      });
+      // TOP channels
+      const chHost = $("#host-detail-channels");
+      d.top_channels.forEach(c => {
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        row.innerHTML = `<div class="label" title="${escapeHtml(c.channel || "")}">${escapeHtml((c.channel || "").replace(/^.+\//, ""))}</div>
+          <div class="bar lvl-default"><div style="width:${(c.n / d.top_channels[0].n * 100).toFixed(1)}%"></div></div>
+          <div class="count">${c.n.toLocaleString()}</div>`;
+        chHost.appendChild(row);
+      });
+      // Timeline — reuse the existing stacked-bars helper.
+      if (window.HayCharts && d.timeline) {
+        HayCharts.stackedBars($("#host-detail-timeline"), d.timeline);
+      }
+      // Wire the "hunt for this host" pivot.
+      $("#host-pivot-hunt").onclick = () => {
+        const tabBtn = document.querySelector('.tab[data-tab="hunt"]');
+        if (tabBtn) tabBtn.click();
+        setTimeout(() => {
+          resetHuntForm?.();
+          $("#hunt-host").value = host;
+          runHunt?.();
+        }, 60);
+      };
+    } catch (e) {
+      $("#host-detail-summary").innerHTML = `<div class="muted small">通信エラー: ${escapeHtml(String(e))}</div>`;
+    }
+  }
+
+  // Close button on the host detail card.
+  document.addEventListener("click", (e) => {
+    if (e.target && e.target.id === "host-detail-close") {
+      $("#host-detail-card").hidden = true;
+    }
+    if (e.target && e.target.id === "hosts-refresh") loadHosts();
+    if (e.target && e.target.id === "hosts-include-suppressed") loadHosts();
   });
 
   // -------- フッタ ステータスバー --------
