@@ -1372,19 +1372,49 @@ class Handler(BaseHTTPRequestHandler):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def pick_port(preferred: int) -> int:
+def pick_port(preferred: int) -> tuple[int, bool]:
+    """
+    Try the preferred port first, fall back to an OS-chosen one.
+
+    Returns (chosen_port, fell_back).  When `fell_back` is True the caller
+    should print a loud warning — the most common cause is a zombie server
+    from a previous (often elevated) launch holding the port. A silent
+    fallback in that case is exactly how we recently shipped a confusing
+    "browser opens the wrong server" bug.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.bind(("127.0.0.1", preferred))
         s.close()
-        return preferred
+        return preferred, False
     except OSError:
         s.close()
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
         s.close()
-        return port
+        return port, True
+
+
+def _holder_of_port(port: int) -> str:
+    """Diagnostic: find what is currently bound to the requested port so
+    we can tell the user how to kill it. Best-effort, Windows-specific."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        out = subprocess.check_output(
+            ["netstat", "-ano", "-p", "TCP"], stderr=subprocess.STDOUT,
+            timeout=3,
+        ).decode("utf-8", "replace")
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return ""
+    needle = f":{port} "
+    for line in out.splitlines():
+        if needle in line and "LISTENING" in line:
+            parts = line.split()
+            if parts and parts[-1].isdigit():
+                return parts[-1]
+    return ""
 
 
 def boot_reindex():
@@ -1404,21 +1434,59 @@ def boot_reindex():
               flush=True)
 
 
+PORT_FILE = WORKSPACE / ".port"
+
+
 def main():
     boot_reindex()
-    port = pick_port(int(os.environ.get("HAYABUSA_GUI_PORT", "8787")))
+    preferred = int(os.environ.get("HAYABUSA_GUI_PORT", "8787"))
+    port, fell_back = pick_port(preferred)
     host = "127.0.0.1"
+
     print(f"\n  Hayabusa GUI")
     print(f"  Binary : {HAYABUSA_BIN}")
     print(f"  Rules  : {RULES_DIR}")
     print(f"  DB     : {DB_PATH}")
-    print(f"  Listen : http://{host}:{port}\n", flush=True)
+
+    if fell_back:
+        # The most common cause of "browser shows the OLD server" is a
+        # zombie that grabbed the preferred port. Be very loud about it
+        # so the launcher script can show a usable error.
+        holder = _holder_of_port(preferred)
+        print(f"\n  ⚠️  Preferred port {preferred} is already in use.")
+        if holder:
+            print(f"  ⚠️  Holder: PID {holder} (run 'taskkill /PID {holder} /F'")
+            print(f"             or use Task Manager; may need Administrator).")
+        print(f"  ⚠️  Falling back to a random port. The launcher will open")
+        print(f"  ⚠️  the correct URL automatically. If you started the browser")
+        print(f"  ⚠️  manually, use the URL below — not http://127.0.0.1:{preferred}/.\n")
+
+    url = f"http://{host}:{port}"
+    print(f"  Listen : {url}\n", flush=True)
+
+    # Write the port file so start.ps1 / external tooling can open the
+    # right URL even when we fell back to a random port. Atomically swap
+    # to avoid a half-written file under a fast launch.
+    try:
+        tmp = PORT_FILE.with_suffix(".port.tmp")
+        tmp.write_text(str(port), encoding="utf-8")
+        tmp.replace(PORT_FILE)
+    except OSError as exc:
+        print(f"  (warn: could not write port file {PORT_FILE}: {exc})", flush=True)
+
     httpd = ThreadingHTTPServer((host, port), Handler)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("shutting down")
         httpd.shutdown()
+    finally:
+        # Best-effort cleanup so the next launch isn't fooled by a stale
+        # file. We don't worry if the file is already gone.
+        try:
+            PORT_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
