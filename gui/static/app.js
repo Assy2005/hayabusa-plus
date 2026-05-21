@@ -1890,7 +1890,76 @@ console.log("[app] app.js v2026-05-21-c executing");
     if ($("#tab-dashboard").classList.contains("active")) loadDashboard();
   });
 
+  // -------- フッタ ステータスバー --------
+  // Refreshed periodically with backend health, store counts, feed status
+  // and admin posture. This is a "you can see at a glance what's loaded"
+  // surface — purely informational, no interactions.
+  async function refreshStatusBar() {
+    const set = (id, text, klass) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const span = el.querySelector("span:last-child") || el;
+      span.textContent = text;
+      if (klass) el.className = "group " + klass;
+    };
+    const setDot = (id, cls) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const dot = el.querySelector(".dot");
+      if (dot) dot.className = "dot " + cls;
+    };
+
+    try {
+      // Health is the cheapest probe — runs first to colour the conn dot.
+      const h = await (await fetch("/api/health")).json();
+      const ver = (h.version || "").replace(/^Hayabusa\s*/, "").slice(0, 40);
+      document.querySelector("#sb-conn span:last-child").textContent = "接続中";
+      setDot("sb-conn", "ok");
+      document.querySelector("#sb-engine").textContent = "engine: " + (ver || "?");
+    } catch {
+      document.querySelector("#sb-conn span:last-child").textContent = "接続失敗";
+      setDot("sb-conn", "bad");
+      return;
+    }
+
+    try {
+      // Detection count + latest job from a single jobs query.
+      const jobs = await (await fetch("/api/jobs")).json();
+      const total = jobs.reduce((s, j) => s + (j.detection_count || 0), 0);
+      document.querySelector("#sb-store").textContent =
+        "DB: " + total.toLocaleString() + " 検知 / " + jobs.length + " ジョブ";
+      if (jobs[0]) {
+        const t = jobs[0].started_at ? new Date(jobs[0].started_at * 1000)
+          .toLocaleTimeString("ja-JP", {hour:"2-digit",minute:"2-digit"}) : "—";
+        document.querySelector("#sb-job").textContent =
+          "最終ジョブ: " + t + " · " + (jobs[0].status || "?");
+      }
+    } catch { /* keep prior text */ }
+
+    try {
+      // Feed meta + lookup count.
+      const l = await (await fetch("/api/lookups")).json();
+      const feeds = (l.feeds || []).filter(f => f && f.fetched_at);
+      const ok = feeds.filter(f => !f.error).length;
+      const total = (l.lookups || []).reduce((s, x) => s + (x.entries || 0), 0);
+      document.querySelector("#sb-feeds").textContent =
+        "IoC: " + total.toLocaleString() + " 件 / " + ok + " フィード";
+    } catch { /* ignore */ }
+
+    try {
+      const s = await (await fetch("/api/system/info")).json();
+      const isAdmin = !!s.admin;
+      document.querySelector("#sb-admin").textContent =
+        "権限: " + (isAdmin ? "管理者" : "通常ユーザ");
+      // Re-style the admin badge subtly: warn colour when not elevated.
+      const el = document.querySelector("#sb-admin");
+      el.style.color = isAdmin ? "var(--ok)" : "var(--warn)";
+    } catch { /* ignore */ }
+  }
+
   // boot
   health(); refreshWorkspace(); refreshJobs(); updateScanButton(); loadSystemInfo();
+  refreshStatusBar();
   setInterval(refreshWorkspace, 5000);
+  setInterval(refreshStatusBar, 15000);   // status bar refresh
 })();

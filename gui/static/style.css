@@ -1,9 +1,34 @@
 :root{
-  --bg:#0b0d12; --panel:#12161f; --panel-2:#161b26; --line:#1f2533;
-  --text:#d8def0; --muted:#7d869c; --accent:#ff5722; --accent-2:#ffab40;
+  /* Surfaces & text */
+  --bg:#0b0d12; --panel:#12161f; --panel-2:#161b26; --panel-3:#1a2032;
+  --line:#1f2533; --line-strong:#2a3654;
+  --text:#d8def0; --muted:#7d869c; --muted-2:#5c647a;
+
+  /* Brand accents */
+  --accent:#ff5722; --accent-2:#ffab40; --accent-soft:#3a2540;
+  --focus:#5599ff;
+
+  /* Severity palette (shared with chart legends) */
   --crit:#ff1744; --high:#ff5252; --med:#ffb300; --low:#42a5f5; --info:#7e8aa1;
-  --ok:#26c281; --bad:#ef5350;
+
+  /* State colors */
+  --ok:#26c281; --bad:#ef5350; --warn:#ffb86b;
+
+  /* Spacing scale (use these instead of magic numbers) */
+  --sp-1: 4px; --sp-2: 6px; --sp-3: 8px; --sp-4: 10px;
+  --sp-5: 12px; --sp-6: 14px; --sp-7: 16px; --sp-8: 20px;
+
+  /* Radii */
+  --r-sm:4px; --r-md:6px; --r-lg:8px; --r-pill:99px;
+
+  /* Transitions */
+  --t-fast: 120ms ease-out;
+  --t-med:  220ms ease-out;
 }
+
+/* Universal focus ring for keyboard navigation. We use :focus-visible
+   instead of :focus so mouse clicks don't show the ring (less noisy). */
+:focus-visible{outline:2px solid var(--focus);outline-offset:1px;border-radius:3px}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
   font-family:-apple-system,Segoe UI,Inter,Roboto,sans-serif;font-size:13px;
@@ -452,3 +477,53 @@ details[open] summary{color:var(--text)}
 .metrics.compact > div{padding:5px}
 .metrics.compact span{font-size:14px}
 .feed{min-height:120px}
+
+
+/* === 共通: empty state / loading / 通知バナー === */
+.empty-state{padding:18px 16px;text-align:center;color:var(--muted);
+  font-size:12px;line-height:1.6}
+.empty-state .icon{font-size:24px;margin-bottom:6px;opacity:.6}
+.empty-state .title{color:var(--text);font-weight:500;margin-bottom:4px}
+.empty-state code{background:#1a1f2c;padding:1px 5px;border-radius:3px;
+  font-size:11px}
+
+.banner{padding:8px 12px;border-radius:6px;font-size:12px;
+  display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.banner.warn{background:#2a1f0f;color:var(--warn);border:1px solid #4a3a1a}
+.banner.error{background:#2a0f12;color:var(--bad);border:1px solid #4a1a22}
+.banner.ok{background:#0f2a1a;color:var(--ok);border:1px solid #1a4a2a}
+
+/* === タブナビ: タブ数が増えた時の overflow 対応 === */
+nav{flex-wrap:wrap;flex:1 1 auto;min-width:0}
+.tab{transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast)}
+
+/* === ボタン: 共通の transition + disabled スタイル統一 === */
+button{transition:background var(--t-fast),border-color var(--t-fast),
+  color var(--t-fast),transform var(--t-fast)}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{opacity:.45;cursor:not-allowed}
+
+/* === 入力フィールド: focus 強調 === */
+input:focus, select:focus, textarea:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 2px rgba(255,87,34,.15);
+}
+
+/* === スクロールバー: 暗テーマ向けの目立たないやつ === */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:#0b0e15}
+::-webkit-scrollbar-thumb{background:#2a3242;border-radius:5px;border:2px solid #0b0e15}
+::-webkit-scrollbar-thumb:hover{background:#3a4252}
+
+/* === フッタ ステータスバー === */
+footer.status-bar{flex:0 0 auto;display:flex;gap:14px;align-items:center;
+  padding:4px 14px;background:#0a0d15;border-top:1px solid var(--line);
+  font-size:11px;color:var(--muted);font-family:ui-monospace,Consolas,monospace}
+footer.status-bar .group{display:flex;align-items:center;gap:5px}
+footer.status-bar .dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+footer.status-bar .dot.ok{background:var(--ok)}
+footer.status-bar .dot.warn{background:var(--warn)}
+footer.status-bar .dot.bad{background:var(--bad)}
+footer.status-bar .sep{color:var(--line-strong)}
+footer.status-bar .right{margin-left:auto;display:flex;gap:10px}
+

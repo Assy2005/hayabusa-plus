@@ -442,6 +442,92 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # noqa: A003
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
 
+    # ------------------------------------------------------------------
+    # Security middleware
+    # ------------------------------------------------------------------
+    # All security checks run BEFORE per-route handlers via these two
+    # hooks: `_security_preflight()` runs at the top of each verb handler,
+    # and `end_headers()` is overridden to attach baseline hardening
+    # headers to every response. Three checks at preflight:
+    #   1. Host header must be 127.0.0.1[:port] / localhost[:port] / [::1]
+    #      → defeats DNS rebinding (an attacker's site cannot point a
+    #      domain at 127.0.0.1, get the browser to issue a request, and
+    #      have it land on our service).
+    #   2. For POST / DELETE, an Origin or Referer header from the same
+    #      host is required → defeats classic CSRF where another page in
+    #      the browser hits our endpoints via fetch/form post.
+    #   3. Hayabusa-FX-Token-style anti-CSRF token is NOT required because
+    #      the Origin/Host pair is already authoritative for browser
+    #      requests on a same-origin localhost service.
+
+    ALLOWED_HOSTS = {
+        "127.0.0.1", "localhost", "[::1]", "::1",
+    }
+
+    def _security_preflight(self) -> bool:
+        """Return True if the request passes all gates; otherwise the
+        handler has already responded with an appropriate 4xx and the
+        caller must return early."""
+        # --- 1. Host header check (DNS rebinding) ---
+        host_hdr = (self.headers.get("Host") or "").strip()
+        # Strip the port for comparison; the bind port is fluid in tests.
+        host_only = host_hdr.rsplit(":", 1)[0].lower() if host_hdr else ""
+        if host_only not in self.ALLOWED_HOSTS:
+            self._send_text(
+                f"Bad Host header (DNS rebinding defence): {host_hdr!r}", 421)
+            return False
+
+        # --- 2. CSRF check on state-changing verbs ---
+        if self.command in ("POST", "DELETE"):
+            origin = (self.headers.get("Origin") or "").strip()
+            referer = (self.headers.get("Referer") or "").strip()
+            allowed_scheme_host = {"http://" + h for h in self.ALLOWED_HOSTS}
+            def _origin_ok(value: str) -> bool:
+                if not value:
+                    return False
+                from urllib.parse import urlparse
+                u = urlparse(value)
+                host = (u.hostname or "").lower()
+                return host in self.ALLOWED_HOSTS
+            if not (_origin_ok(origin) or _origin_ok(referer)):
+                self._send_text(
+                    "Forbidden: cross-origin POST/DELETE blocked. "
+                    "Set Origin or Referer to a localhost URL.", 403)
+                return False
+        return True
+
+    # baseline security headers attached to every response. We intercept
+    # `end_headers` rather than each `send_header` site to ensure no
+    # handler can accidentally skip them.
+    _SECURITY_HEADERS = (
+        ("X-Frame-Options", "DENY"),                       # clickjacking
+        ("X-Content-Type-Options", "nosniff"),             # MIME sniffing
+        ("Referrer-Policy", "no-referrer"),                # cross-origin leak
+        ("X-XSS-Protection", "0"),                         # disable legacy XSS auditor
+        ("Cross-Origin-Opener-Policy", "same-origin"),     # browser process isolation
+        ("Cross-Origin-Resource-Policy", "same-origin"),
+        # CSP: the GUI ships its own JS/CSS, never loads from CDNs, never
+        # embeds frames. 'self' is sufficient. 'unsafe-inline' is allowed
+        # for style/script because we have inline onclick handlers and a
+        # small bit of inline style in dynamically-rendered HTML — the
+        # browser refusing those would break the modal close path that
+        # we deliberately routed through inline onclick for reliability.
+        ("Content-Security-Policy",
+         "default-src 'self'; "
+         "script-src 'self' 'unsafe-inline'; "
+         "style-src 'self' 'unsafe-inline'; "
+         "img-src 'self' data:; "
+         "connect-src 'self'; "
+         "frame-ancestors 'none'; "
+         "base-uri 'self'; "
+         "form-action 'self'"),
+    )
+
+    def end_headers(self):  # type: ignore[override]
+        for k, v in self._SECURITY_HEADERS:
+            self.send_header(k, v)
+        super().end_headers()
+
     # ---------- helpers ----------
 
     def _send_json(self, obj, status=200):
@@ -494,6 +580,8 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- routing ----------
 
     def do_GET(self):  # noqa: N802
+        if not self._security_preflight():
+            return
         u = urlparse(self.path)
         path = u.path
 
@@ -933,6 +1021,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send_text("not found", 404)
 
     def do_DELETE(self):  # noqa: N802
+        if not self._security_preflight():
+            return
         u = urlparse(self.path)
         m = re.match(r"^/api/suppressions/(\d+)$", u.path)
         if m:
@@ -945,6 +1035,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send_text("not found", 404)
 
     def do_POST(self):  # noqa: N802
+        if not self._security_preflight():
+            return
         u = urlparse(self.path)
         path = u.path
 

@@ -576,6 +576,23 @@
     </section>
   </main>
 
+  <footer class="status-bar" id="status-bar">
+    <span class="group" id="sb-conn" title="サーバ接続状態">
+      <span class="dot ok"></span><span>接続中</span>
+    </span>
+    <span class="sep">·</span>
+    <span class="group" id="sb-engine" title="Hayabusa バイナリ">engine: —</span>
+    <span class="sep">·</span>
+    <span class="group" id="sb-store" title="検知データ件数">DB: —</span>
+    <span class="sep">·</span>
+    <span class="group" id="sb-feeds" title="IoC フィード">IoC: —</span>
+    <span class="sep">·</span>
+    <span class="group" id="sb-admin" title="管理者権限">権限: —</span>
+    <span class="right">
+      <span class="group" id="sb-job">最終ジョブ: —</span>
+    </span>
+  </footer>
+
   <!-- チャネル選択モーダル: 「このパソコン」スキャン時のチャネル絞り込み
        Visibility is toggled by adding/removing the `is-hidden` class
        (see .modal.is-hidden in style.css). We deliberately do NOT use
