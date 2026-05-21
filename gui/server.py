@@ -42,6 +42,7 @@ sys.path.insert(0, str(sys_path_anchor))
 import store as _store  # noqa: E402
 import rule_index as _rule_index  # noqa: E402
 import process_tree as _process_tree  # noqa: E402
+import behavioral as _behavioral  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 GUI_DIR = ROOT / "gui"
@@ -661,6 +662,17 @@ class Handler(BaseHTTPRequestHandler):
                 "related": related,
                 "rule_history": history,
             })
+            return
+
+        if path == "/api/behavioral/anomalies":
+            qs = parse_qs(u.query)
+            top = min(int(qs.get("top", ["50"])[0]), 500)
+            try:
+                rows = _behavioral.analyse(STORE, top=top)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json({"anomalies": rows, "total": len(rows)})
             return
 
         if path == "/api/hunt/facets":

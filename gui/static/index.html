@@ -246,6 +246,21 @@
           <div id="chart-hosts" class="chart-host"></div>
         </div>
       </div>
+
+      <div class="card anomalies-card">
+        <h2>検知パターン異常 <span class="muted small">(Sigma では書けない振舞いを自動抽出)</span></h2>
+        <div class="muted small">
+          バースト (平常比 N 倍)・拡散 (同ルールが複数ホスト同期発火)・沈黙
+          (常時活動ホストの無音区間)・時間外 (深夜帯の高重要度) を検知データから自動抽出。
+          各行クリックで該当条件のハント検索にジャンプします。
+        </div>
+        <table id="anomalies-table">
+          <thead><tr>
+            <th>種別</th><th>重要度</th><th>対象</th><th>件数 / 倍率</th><th>説明</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- 結果 -->

@@ -1729,6 +1729,85 @@ console.log("[app] app.js v2026-05-21-c executing");
       sublabel: `Critical+High: ${c.sev_count || 0}`,
       count: c.n,
     })));
+
+    // Run the anomaly analyser. It can be slow on huge corpora (it walks
+    // the whole detection table) so fire it asynchronously without
+    // blocking the rest of the dashboard render.
+    loadAnomalies();
+  }
+
+  async function loadAnomalies() {
+    const tb = $("#anomalies-table tbody"); if (!tb) return;
+    tb.innerHTML = `<tr><td colspan="6" class="muted small">分析中…</td></tr>`;
+    try {
+      const r = await fetch("/api/behavioral/anomalies?top=30");
+      const d = await r.json();
+      tb.innerHTML = "";
+      if (d.error) {
+        tb.innerHTML = `<tr><td colspan="6" class="muted small">エラー: ${escapeHtml(d.error)}</td></tr>`;
+        return;
+      }
+      if (!d.anomalies.length) {
+        tb.innerHTML = `<tr><td colspan="6" class="muted small">
+          異常は検出されていません。検知データが少ない場合は数日分を取り込んでから再度試してください。
+        </td></tr>`;
+        return;
+      }
+      d.anomalies.forEach(a => {
+        const tr = document.createElement("tr");
+        const kindLabel = {
+          burst: "バースト", spread: "拡散",
+          silence: "沈黙",   off_hours: "時間外",
+        }[a.kind] || a.kind;
+        const target = a.rule_title
+          ? escapeHtml(a.rule_title)
+          : (a.host ? escapeHtml(a.host) : "—");
+        let num = "—";
+        if (a.kind === "burst")    num = `${a.observed} 件 (×${a.ratio})`;
+        if (a.kind === "spread")   num = `${a.hosts_count} ホスト / ${a.observed} 件`;
+        if (a.kind === "silence")  num = `${a.gap_hours}h 無音`;
+        if (a.kind === "off_hours") num = a.ts ? a.ts.slice(11, 16) : "—";
+        const lvl = (a.severity || "medium").toLowerCase();
+        tr.innerHTML = `
+          <td><span class="anom-kind ${a.kind}">${kindLabel}</span></td>
+          <td><span class="lvl lvl-${lvl}">${lvl.slice(0,4)}</span></td>
+          <td class="anom-target">${target}</td>
+          <td class="anom-num">${num}</td>
+          <td class="anom-desc">${escapeHtml(a.description)}</td>
+          <td><a href="#" class="muted small">調査 →</a></td>`;
+        tr.onclick = () => drillIntoAnomaly(a);
+        tb.appendChild(tr);
+      });
+    } catch (e) {
+      tb.innerHTML = `<tr><td colspan="6" class="muted small">
+        通信エラー: ${escapeHtml(String(e))}
+      </td></tr>`;
+    }
+  }
+
+  // When the analyst clicks an anomaly row, jump into the Hunt tab with
+  // a pre-applied filter that surfaces the underlying detections.
+  function drillIntoAnomaly(a) {
+    // Switch tab first so the form elements exist by the time we set them.
+    const tabBtn = document.querySelector('.tab[data-tab="hunt"]');
+    if (tabBtn) tabBtn.click();
+    setTimeout(() => {
+      resetHuntForm?.();
+      const d = a.drill || {};
+      if (d.host)    $("#hunt-host").value = d.host;
+      if (d.from || d.to) {
+        $("#hunt-window").value = "custom";
+        $("#hunt-custom-range").hidden = false;
+        if (d.from) $("#hunt-from").value = d.from;
+        if (d.to)   $("#hunt-to").value = d.to;
+      }
+      if (a.rule_id && !d.host) {
+        // For burst/spread the focus is on the rule; the hunt form takes
+        // a free-text query that matches rule_title, so use that.
+        $("#hunt-q").value = a.rule_title || "";
+      }
+      runHunt?.();
+    }, 60);
   }
 
   function renderBars(container, items) {
