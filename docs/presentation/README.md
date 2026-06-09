@@ -6,8 +6,9 @@
 
 | ファイル | 用途 | 想定読者 |
 |---|---|---|
-| [`pptx/hayabusa-plus.pptx`](pptx/hayabusa-plus.pptx) | **簡潔版 PowerPoint** (11 枚、12-15 分) | 投影画面 |
+| [`pptx/hayabusa-plus.pptx`](pptx/hayabusa-plus.pptx) | **一般向け PowerPoint** (11 枚、10-12 分) | 専門知識のない方を含む幅広い聴衆 |
 | [`pptx/build_deck.py`](pptx/build_deck.py) | 上記 .pptx を生成する python-pptx スクリプト | 編集する人 |
+| [`pptx/build_deck_advanced.py`](pptx/build_deck_advanced.py) | 技術者向け版を生成するスクリプト | 編集する人 |
 | [`slides.md`](slides.md) | **Marp 形式スライド** (詳細版、約 30 枚) | 投影画面 (時間 20-25 分版) |
 | [`speaker_notes.md`](speaker_notes.md) | 発表者用カンペ + 想定 Q&A | 発表者本人 |
 | [`demo_script.md`](demo_script.md) | デモの手順書 + 失敗時対応 | 発表者本人 |
@@ -15,12 +16,19 @@
 
 ### どのスライド版を使うか
 
-| 発表時間 | 推奨 |
+| 聴衆 / 発表時間 | 推奨 |
 |---|---|
-| **12-15 分** (+ デモ 5 分 + Q&A 5 分) | **`pptx/hayabusa-plus.pptx`** (11 枚、圧縮版) |
-| **20-25 分** | `slides.md` を Marp で PDF 化 (30 枚、詳細版) |
+| **一般 / 非エンジニア混在**, 10-12 分 | **`pptx/hayabusa-plus.pptx`** (一般向け、用語を絞ったストーリー型) |
+| **技術者**, 12-15 分 | `build_deck_advanced.py` を実行 → 同名 .pptx を上書き (lookup 拡張等の技術ディテール込み) |
+| **技術者**, 20-25 分 | `slides.md` を Marp で PDF 化 (詳細 30 枚) |
 
-両方とも内容は揃えてあり、speaker_notes / demo_script はどちらにも流用可能です。
+speaker_notes / demo_script / handout はどの版にも流用可能。`pptx/` 配下を切り替えたい場合は対応する `build_deck*.py` を実行します:
+
+```powershell
+cd docs\presentation\pptx
+python build_deck.py                  # 一般向け版を生成 (上書き)
+python build_deck_advanced.py         # 技術者向け版を生成 (上書き)
+```
 
 ---
 
