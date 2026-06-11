@@ -26,6 +26,10 @@ console.log("[app] app.js v2026-05-21-c executing");
     $$(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
     const id = "tab-" + name;
     $$(".tab-panel").forEach(p => p.classList.toggle("active", p.id === id));
+    // タブを URL ハッシュに反映 → 共有・ブックマーク・直リンクが効く
+    if (("#" + name) !== location.hash) {
+      try { history.replaceState(null, "", "#" + name); } catch { location.hash = name; }
+    }
     if (name === "results") refreshJobs();
     if (name === "rules") { loadRules(); loadFeedback(); loadSuppressions(); loadLookups(); }
     if (name === "dashboard") loadDashboard();
@@ -33,6 +37,12 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (name === "hosts") loadHosts();
   }
   $$(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+
+  // 起動時に URL ハッシュ (#dashboard 等) があればそのタブを開く
+  const _hashTab = (location.hash || "").replace(/^#/, "");
+  if (_hashTab && document.getElementById("tab-" + _hashTab)) {
+    switchTab(_hashTab);
+  }
 
   // ホーム画面の 3 ステップカード → 該当タブへ
   $$(".home-step").forEach(step => {
@@ -566,6 +576,36 @@ console.log("[app] app.js v2026-05-21-c executing");
     // 進捗バー + 中止ボタンを表示
     $("#scan-progress").hidden = false;
     $("#progress-note").textContent = "スキャンの準備をしています…";
+    // バーをリセット: 推定 % が来るまでは流れるストライプ (indeterminate)
+    const progFill = $("#scan-progress .progress-fill");
+    progFill.classList.add("indeterminate");
+    progFill.style.width = "";
+    // 進捗表示用のローカル状態 (note に % と件数を合成する)
+    let totalFilesSeen = null, lastPct = 0, lastEta = null;
+    const fmtDur = (s) => s >= 60 ? `${Math.floor(s / 60)}分${s % 60}秒` : `${s}秒`;
+    const renderNote = () => {
+      if (lastPct >= 100) {  // 完了直前のスナップ表示
+        const tail = totalFilesSeen
+          ? `（${totalFilesSeen.toLocaleString()} 件のログ）` : "";
+        $("#progress-note").textContent = `解析完了 ✓ 100%${tail}`;
+        return;
+      }
+      const parts = [];
+      if (lastPct > 0) parts.push(`${Math.round(lastPct)}%`);
+      if (totalFilesSeen) parts.push(`${totalFilesSeen.toLocaleString()} 件のログ`);
+      let s = parts.length ? `${parts.join(" ・ ")} を解析中…` : "解析中…";
+      if (lastEta != null && lastPct > 0) {
+        s += `（残り 約${fmtDur(lastEta)}）`;
+      }
+      $("#progress-note").textContent = s;
+    };
+    const setProgress = (pct, etaSec) => {
+      lastPct = pct;
+      lastEta = (etaSec == null) ? lastEta : etaSec;
+      progFill.classList.remove("indeterminate");  // 確定バーに切替
+      progFill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+      renderNote();
+    };
     const cancelBtn = $("#cancel-scan-btn");
     cancelBtn.hidden = false;
     cancelBtn.disabled = false;
@@ -581,9 +621,10 @@ console.log("[app] app.js v2026-05-21-c executing");
     // スキャン終了時に進捗 UI を片付ける共通処理
     const finishUI = (statusText) => {
       clearInterval(tick);
-      $("#scan-progress").hidden = true;
       cancelBtn.hidden = true;
       if (statusText) $("#progress-note").textContent = statusText;
+      // 100% を一瞬見せてから片付ける (完了が伝わるように)。
+      setTimeout(() => { $("#scan-progress").hidden = true; }, 450);
     };
 
     liveES = new EventSource(`/api/jobs/${jobId}/stream`);
@@ -594,9 +635,8 @@ console.log("[app] app.js v2026-05-21-c executing");
         $("#m-status").textContent = localizeStatus(msg.job.status);
         $("#m-status").className = "status-" + msg.job.status;
         if (msg.job.status === "running") {
-          $("#progress-note").textContent = msg.job.total_files
-            ? `${msg.job.total_files.toLocaleString()} 件のログを解析中…`
-            : "解析中…";
+          if (msg.job.total_files) totalFilesSeen = msg.job.total_files;
+          renderNote();
         }
         if (["done", "failed", "cancelled"].includes(msg.job.status)) {
           finishUI();
@@ -604,9 +644,12 @@ console.log("[app] app.js v2026-05-21-c executing");
       } else if (msg.type === "meta") {
         // 規模 (総ログ件数) が分かったら note に反映
         if (msg.total_files != null) {
-          $("#progress-note").textContent =
-            `${Number(msg.total_files).toLocaleString()} 件のログを解析中…`;
+          totalFilesSeen = Number(msg.total_files);
+          renderNote();
         }
+      } else if (msg.type === "progress") {
+        // サーバが入力サイズ × 経過時間から推定した完了率
+        setProgress(Number(msg.pct), msg.eta_sec);
       } else if (msg.type === "detection") {
         $("#m-count").textContent = msg.n;
         appendDetection(msg.event, msg.n);

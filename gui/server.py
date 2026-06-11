@@ -184,6 +184,7 @@ class Job:
         "subscribers", "lock", "detection_count", "last_event_at",
         "_indexed_lines_at_start",
         "proc", "total_files", "cancel_requested",
+        "total_bytes", "progress_pct",
     )
 
     def __init__(self, kind: str, args: list[str]):
@@ -208,6 +209,8 @@ class Job:
         self.proc = None                # subprocess handle while running
         self.total_files = None         # parsed from Hayabusa stdout
         self.cancel_requested = False
+        self.total_bytes = None         # estimated input size (for % progress)
+        self.progress_pct = 0.0         # estimated completion 0..100
 
     def to_dict(self):
         return {
@@ -219,6 +222,8 @@ class Job:
             "finished_at": self.finished_at,
             "detection_count": self.detection_count,
             "total_files": self.total_files,
+            "total_bytes": self.total_bytes,
+            "progress_pct": round(self.progress_pct, 1),
             "args": self.args,
         }
 
@@ -410,6 +415,113 @@ def tail_results(job: Job, stop_event: threading.Event):
         time.sleep(0.4)
 
 
+# ---------------------------------------------------------------------------
+# Estimated progress %
+# ---------------------------------------------------------------------------
+# Hayabusa's progress bar is indicatif-based and only renders to a TTY — when
+# we pipe its output to a file (as we must, to capture it) it emits nothing
+# incremental. So a *true* percentage is impossible to read back. Instead we
+# estimate completion from input size and elapsed time, calibrated against the
+# throughput of past scans. The estimate is intentionally honest: it climbs
+# linearly toward an ETA, is capped at 99% until the process actually exits,
+# then snaps to 100%. On the first run it uses a seed throughput measured on a
+# reference scan (≈1 MB/s for the full ~4,700-rule set); thereafter it adapts.
+
+CALIBRATION_PATH = WORKSPACE / ".scan_calibration.json"
+# Seed: a 16-file / 85.5 MiB upload set scanned in ~88 s with the full rule
+# set ⇒ ~1.0 MB/s after a fixed rule-loading overhead.
+_SEED_OVERHEAD_SEC = 4.0
+_SEED_RATE_BPS = 1_050_000.0
+_CALIB_EMA_ALPHA = 0.3  # weight of the newest sample
+
+
+def _load_calibration() -> tuple[float, float]:
+    """Return (overhead_sec, rate_bytes_per_sec), falling back to the seed."""
+    try:
+        data = json.loads(CALIBRATION_PATH.read_text(encoding="utf-8"))
+        ov = float(data.get("overhead_sec", _SEED_OVERHEAD_SEC))
+        rate = float(data.get("rate_bps", _SEED_RATE_BPS))
+        if rate > 1000 and ov >= 0:
+            return ov, rate
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    return _SEED_OVERHEAD_SEC, _SEED_RATE_BPS
+
+
+def _update_calibration(total_bytes: int, duration_sec: float):
+    """Blend a freshly measured scan into the throughput estimate (EMA).
+
+    Only scans large/long enough to be informative update the model — tiny
+    scans are dominated by fixed overhead and would skew the rate downward.
+    """
+    if not total_bytes or total_bytes < 2_000_000 or duration_sec < 2.0:
+        return
+    ov, rate = _load_calibration()
+    scan_sec = max(0.5, duration_sec - ov)
+    sample_rate = total_bytes / scan_sec
+    new_rate = (1 - _CALIB_EMA_ALPHA) * rate + _CALIB_EMA_ALPHA * sample_rate
+    try:
+        CALIBRATION_PATH.write_text(
+            json.dumps({"overhead_sec": ov, "rate_bps": round(new_rate, 1),
+                        "last_bytes": total_bytes,
+                        "last_duration_sec": round(duration_sec, 2)}),
+            encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _estimate_total_bytes(params: dict) -> int:
+    """Best-effort sum of input bytes for the scan target.
+
+    Returns 0 when the size can't be determined (e.g. an unreadable live set);
+    the caller then falls back to an indeterminate bar.
+    """
+    target = params.get("target", {})
+    ttype = target.get("type")
+    try:
+        if ttype == "file":
+            return safe_workspace_path(target["path"]).stat().st_size
+        if ttype == "directory":
+            root = safe_workspace_path(target["path"])
+            total = 0
+            for p in root.rglob("*"):
+                if p.suffix.lower() in (".evtx", ".json", ".jsonl"):
+                    try:
+                        total += p.stat().st_size
+                    except OSError:
+                        pass
+            return total
+        if ttype == "live":
+            return sum(c["size"] or 0 for c in _list_system_channels()
+                       if c.get("readable"))
+    except OSError:
+        return 0
+    return 0
+
+
+def _progress_ticker(job: Job, stop_event: threading.Event):
+    """Publish an estimated completion % a few times a second while running.
+
+    pct = min(99, elapsed / estimated_total_sec * 100). estimated_total_sec is
+    rule-loading overhead plus input_bytes / calibrated_throughput. If we have
+    no size estimate we stay silent and the UI keeps its indeterminate bar.
+    """
+    if not job.total_bytes:
+        return
+    overhead, rate = _load_calibration()
+    est_total = max(2.0, overhead + job.total_bytes / rate)
+    while not stop_event.is_set():
+        elapsed = time.time() - (job.started_at or time.time())
+        pct = min(99.0, elapsed / est_total * 100.0)
+        # Never let the estimate slide backwards.
+        if pct > job.progress_pct:
+            job.progress_pct = pct
+            eta = max(0, int(est_total - elapsed))
+            job.publish({"type": "progress", "pct": round(pct, 1),
+                         "eta_sec": eta, "elapsed_sec": int(elapsed)})
+        stop_event.wait(0.5)
+
+
 def run_job(job: Job, params: dict):
     try:
         argv = build_hayabusa_argv(job, params)
@@ -420,6 +532,10 @@ def run_job(job: Job, params: dict):
         job.finished_at = time.time()
         job.persist()
         return
+
+    # Estimate input size up front so the progress ticker has something to
+    # work with. Cheap (a few stat calls); 0 ⇒ fall back to indeterminate bar.
+    job.total_bytes = _estimate_total_bytes(params)
 
     job.status = "running"
     job.persist()
@@ -438,6 +554,10 @@ def run_job(job: Job, params: dict):
     meta_thread = threading.Thread(target=_watch_stdout_meta,
                                    args=(job, stop_event), daemon=True)
     meta_thread.start()
+    # Estimated-% ticker. Only does anything if we have a byte estimate.
+    prog_thread = threading.Thread(target=_progress_ticker,
+                                   args=(job, stop_event), daemon=True)
+    prog_thread.start()
 
     try:
         with open(job.stdout_log, "wb") as out, open(job.stderr_log, "wb") as err:
@@ -455,6 +575,7 @@ def run_job(job: Job, params: dict):
         stop_event.set()
         tailer.join(timeout=2)
         meta_thread.join(timeout=1)
+        prog_thread.join(timeout=1)
         job.proc = None
 
     if job.cancel_requested:
@@ -462,6 +583,17 @@ def run_job(job: Job, params: dict):
     elif job.status != "failed":
         job.status = "done" if job.exit_code == 0 else "failed"
     job.finished_at = time.time()
+
+    # Snap the bar to 100% on a clean finish, and feed the real duration back
+    # into the throughput model so the next estimate is sharper. Cancelled /
+    # failed runs are not representative, so they don't calibrate.
+    if job.status == "done":
+        job.progress_pct = 100.0
+        job.publish({"type": "progress", "pct": 100.0, "eta_sec": 0,
+                     "elapsed_sec": int((job.finished_at or 0) - job.started_at)})
+        _update_calibration(job.total_bytes or 0,
+                            (job.finished_at or 0) - job.started_at)
+
     job.persist()
     job.publish({"type": "state", "job": job.to_dict()})
     job.publish({"type": "complete"})

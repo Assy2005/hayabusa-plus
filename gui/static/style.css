@@ -291,9 +291,15 @@ tr.suppressed td{opacity:.5;font-style:italic}
 .verdict-cell.none{color:var(--muted)}
 .dash-controls{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
 .dash-controls label{flex:0 0 auto;min-width:140px}
-#tab-dashboard{overflow:hidden}
-#tab-dashboard > .card:first-child{flex:0 0 auto}
-#chart-rules,#chart-hosts{overflow-y:auto;min-height:80px}
+/* ダッシュボードは情報量が多く 1 画面に収めると各チャートが潰れて
+   見切れる。このタブだけは縦スクロールを許可し、チャートには確定高さを
+   与えて常に全体が見えるようにする。 */
+#tab-dashboard{overflow-y:auto;overflow-x:hidden}
+/* 全ての直下要素を「中身ぶんの高さ」に固定 (flex-shrink を切る)。
+   これをしないと、列が縦に溢れたとき縮みうるカード (コントロール行など)
+   だけが潰れて中身が下の行に重なってしまう。 */
+#tab-dashboard > *{flex:0 0 auto}
+#chart-rules,#chart-hosts{height:auto;max-height:320px;overflow-y:auto;min-height:120px}
 .kpi-row{flex:0 0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0}
 @media (max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;
@@ -302,12 +308,14 @@ tr.suppressed td{opacity:.5;font-style:italic}
 .kpi-v{font-size:24px;font-weight:800;color:var(--text);line-height:1}
 .kpi-v.kpi-bad{color:var(--crit)}
 .kpi-l{font-size:11px;color:var(--muted);letter-spacing:.4px}
-.dash-grid{flex:1 1 0;min-height:0;display:grid;grid-template-columns:1fr 2fr;
+/* flex:1 で潰さず、各行は中身ぶんの高さを取る (タブ自体がスクロールする) */
+.dash-grid{flex:0 0 auto;display:grid;grid-template-columns:1fr 2fr;
   gap:10px;margin:0}
-.dash-grid .card{min-height:0;overflow:hidden}
+.dash-grid .card{min-height:0;overflow:hidden;display:flex;flex-direction:column}
 .dash-grid .card.wide{grid-column:span 1}
 @media (max-width:1000px){.dash-grid{grid-template-columns:1fr}}
-.chart-host{flex:1 1 auto;width:100%;min-height:120px;display:block}
+/* チャートに確定高さを与える。SVG は height:100% なので親に高さが必要。 */
+.chart-host{width:100%;height:260px;min-height:260px;display:block}
 .chart-host svg{width:100%;height:100%;display:block;overflow:visible}
 .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--muted);
   margin-top:8px}
@@ -647,11 +655,13 @@ footer.status-bar .right{margin-left:auto;display:flex;gap:10px}
 .cancel-btn[hidden]{display:none !important}
 .progress-track{height:10px;border-radius:99px;background:var(--code-inline-bg);
   overflow:hidden;position:relative}
-.progress-fill{height:100%;border-radius:99px;
-  background:linear-gradient(90deg,var(--accent),#60A5FA)}
-/* indeterminate: 流れるストライプで「動作中」を示す (真の % は取れないため) */
+/* determinate: width を推定 % に合わせて伸ばす (server が progress イベントで配信) */
+.progress-fill{height:100%;width:0;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),#60A5FA);
+  transition:width .45s ease}
+/* indeterminate: 推定 % が来るまでの間、流れるストライプで「動作中」を示す */
 .progress-fill.indeterminate{position:absolute;width:40%;left:-40%;
-  animation:prog-slide 1.3s ease-in-out infinite}
+  transition:none;animation:prog-slide 1.3s ease-in-out infinite}
 @keyframes prog-slide{
   0%{left:-40%;width:40%}
   50%{left:30%;width:55%}
