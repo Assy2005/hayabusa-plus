@@ -336,9 +336,12 @@
           「何が起きたか」「次にすべきこと」が日本語で表示されます。</span>
       </div>
       <div class="card">
-        <h2>スキャン履歴</h2>
+        <div class="card-head">
+          <h2>スキャン履歴</h2>
+          <button id="clear-all-jobs" class="danger-btn" title="全ジョブ・全検知データを消去（抑制ルールは残ります）">🗑 すべて消去</button>
+        </div>
         <table id="jobs-table">
-          <thead><tr><th>ID</th><th>状態</th><th>開始</th><th>所要時間</th><th>検知数</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>状態</th><th>開始</th><th>所要時間</th><th>検知数</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>

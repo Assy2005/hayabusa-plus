@@ -895,6 +895,7 @@ console.log("[app] app.js v2026-05-21-c executing");
         </div></td></tr>`;
       return;
     }
+    const running = (s) => s === "running" || s === "queued";
     jobs.forEach(j => {
       const tr = document.createElement("tr");
       tr.innerHTML = `<td><code>${j.id}</code></td>
@@ -902,10 +903,47 @@ console.log("[app] app.js v2026-05-21-c executing");
         <td>${fmtTime(j.started_at)}</td>
         <td>${fmtDur(j.started_at, j.finished_at)}</td>
         <td>${j.detection_count}</td>
-        <td><button data-id="${j.id}">開く</button></td>`;
-      tr.querySelector("button").onclick = (e) => { e.stopPropagation(); openDetail(j.id); };
+        <td class="row-actions">
+          <button class="open-btn" data-id="${j.id}">開く</button>
+          <button class="del-btn" data-id="${j.id}" ${running(j.status) ? "disabled title='実行中は削除できません'" : ""}>削除</button>
+        </td>`;
+      tr.querySelector(".open-btn").onclick = (e) => { e.stopPropagation(); openDetail(j.id); };
+      tr.querySelector(".del-btn").onclick = (e) => { e.stopPropagation(); deleteJob(j.id, j.detection_count); };
       tb.appendChild(tr);
     });
+  }
+
+  // 単一ジョブの削除。検知・結果ファイルごと消える。
+  async function deleteJob(jobId, detCount) {
+    if (!confirm(`ジョブ #${jobId} を削除しますか?\n` +
+                 `この検知データ ${detCount} 件と結果ファイルが完全に消えます (元に戻せません)。`)) return;
+    try {
+      const r = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
+      const d = await r.json();
+      if (d.error) { alert("削除できませんでした: " + d.error); return; }
+      // 開いている詳細がこのジョブなら閉じる
+      if (currentDetection && currentDetection._job_id === jobId) {
+        currentDetection = null;
+        const dc = $("#detection-card"); if (dc) dc.hidden = true;
+      }
+      refreshJobs();
+    } catch (e) { alert("通信エラー: " + e); }
+  }
+
+  // すべてのスキャン履歴を消去 (抑制ルールは残る)。
+  async function clearAllJobs() {
+    if (!confirm("すべてのスキャン結果を消去しますか?\n" +
+                 "全ジョブ・全検知データ・結果ファイルが完全に消えます (元に戻せません)。\n" +
+                 "※ 抑制ルールは残ります。")) return;
+    try {
+      const r = await fetch("/api/jobs/clear", { method: "POST" });
+      const d = await r.json();
+      if (d.error) { alert("消去できませんでした: " + d.error +
+        (d.running ? `\n実行中: ${d.running.join(", ")}` : "")); return; }
+      currentDetection = null;
+      const dc = $("#detection-card"); if (dc) dc.hidden = true;
+      refreshJobs();
+    } catch (e) { alert("通信エラー: " + e); }
   }
 
   // Selected detection — set when the user clicks a row. Verdict buttons act on this.
@@ -951,6 +989,9 @@ console.log("[app] app.js v2026-05-21-c executing");
   $("#verdict-tp").onclick = () => postVerdict("tp");
   $("#verdict-fp").onclick = () => postVerdict("fp");
   $("#verdict-clear").onclick = () => postVerdict(null);
+
+  const clearAllBtn = $("#clear-all-jobs");
+  if (clearAllBtn) clearAllBtn.onclick = clearAllJobs;
 
   async function addSuppression(opts) {
     if (!currentDetection) return;

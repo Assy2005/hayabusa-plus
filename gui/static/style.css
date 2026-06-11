@@ -671,3 +671,15 @@ footer.status-bar .right{margin-left:auto;display:flex;gap:10px}
   color:var(--bad);font-weight:600;font-size:12px;padding:5px 14px;border-radius:7px}
 .cancel-btn:hover{background:var(--bad);color:#fff;border-color:var(--bad)}
 .cancel-btn:disabled{opacity:.5}
+
+/* === データ衛生: 削除 / 全消去 === */
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.card-head h2{margin:0}
+.danger-btn{background:#fff;border:1px solid var(--bad);color:var(--bad);
+  font-weight:600;font-size:12px;padding:5px 12px;border-radius:7px}
+.danger-btn:hover{background:var(--bad);color:#fff;border-color:var(--bad)}
+.row-actions{display:flex;gap:6px;white-space:nowrap}
+.del-btn{border:1px solid var(--line);color:var(--bad);background:#fff;
+  font-size:12px;padding:3px 10px;border-radius:6px}
+.del-btn:hover:not(:disabled){background:var(--bad);color:#fff;border-color:var(--bad)}
+.del-btn:disabled{opacity:.4;cursor:not-allowed}

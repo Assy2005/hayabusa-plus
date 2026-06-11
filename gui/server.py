@@ -285,6 +285,35 @@ def register_job(job: Job):
     job.persist()
 
 
+def _delete_job_dir(job_id: str):
+    """Remove workspace/jobs/<id>/ so the boot reindexer won't re-import it.
+
+    Defensive: resolve the path and confirm it is *inside* JOBS_DIR before
+    deleting, so a malformed id can never escape the workspace.
+    """
+    target = (JOBS_DIR / job_id).resolve()
+    try:
+        if JOBS_DIR.resolve() not in target.parents:
+            return  # refuse anything that isn't a direct child of jobs/
+    except OSError:
+        return
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
+
+
+def purge_job(job_id: str) -> int:
+    """Forget a job everywhere: in-memory registry, SQLite, and disk.
+
+    Returns the number of detection rows removed. Caller is responsible for
+    ensuring the job is not still running.
+    """
+    with JOBS_LOCK:
+        JOBS.pop(job_id, None)
+    n = STORE.delete_job(job_id)
+    _delete_job_dir(job_id)
+    return n
+
+
 # ---------------------------------------------------------------------------
 # Hayabusa invocation
 # ---------------------------------------------------------------------------
@@ -1246,6 +1275,25 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "not_found"}, 404)
             return
+
+        # Delete a single job (its detections + on-disk files). A running
+        # job must be cancelled first — we refuse so we never yank files out
+        # from under a live Hayabusa process.
+        m = re.match(r"^/api/jobs/([A-Za-z0-9_-]{6,64})$", u.path)
+        if m:
+            jid = m.group(1)
+            live = JOBS.get(jid)
+            if live and live.status in ("running", "queued"):
+                self._send_json({"error": "job is still running; cancel it first",
+                                 "status": live.status}, 409)
+                return
+            if not live and STORE.get_job(jid) is None:
+                self._send_json({"error": "not_found"}, 404)
+                return
+            removed = purge_job(jid)
+            self._send_json({"deleted": jid, "detections_removed": removed})
+            return
+
         self._send_text("not found", 404)
 
     def do_POST(self):  # noqa: N802
@@ -1278,6 +1326,27 @@ class Handler(BaseHTTPRequestHandler):
             signalled = job.cancel()
             self._send_json({"cancelled": True, "signalled": signalled,
                              "status": job.status})
+            return
+
+        if path == "/api/jobs/clear":
+            # Wipe ALL scan history (jobs + detections + on-disk job dirs).
+            # Refuse while anything is still running so we don't delete files
+            # a live process is writing. Suppressions are preserved.
+            with JOBS_LOCK:
+                running = [j.id for j in JOBS.values()
+                           if j.status in ("running", "queued")]
+            if running:
+                self._send_json({"error": "scans are still running; cancel them first",
+                                 "running": running}, 409)
+                return
+            report = STORE.clear_all()
+            # Drop every job directory under workspace/jobs/.
+            for child in JOBS_DIR.iterdir() if JOBS_DIR.exists() else []:
+                if child.is_dir():
+                    shutil.rmtree(child, ignore_errors=True)
+            with JOBS_LOCK:
+                JOBS.clear()
+            self._send_json({"cleared": True, **report})
             return
 
         if path == "/api/upload":

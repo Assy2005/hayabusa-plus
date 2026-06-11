@@ -210,6 +210,37 @@ class Store:
         row = c.execute("SELECT indexed_lines FROM jobs WHERE id=?", (job_id,)).fetchone()
         return row["indexed_lines"] if row else 0
 
+    def delete_job(self, job_id: str) -> int:
+        """Remove a job and all of its detections from the DB.
+
+        Returns the number of detection rows deleted. The on-disk job
+        directory (workspace/jobs/<id>/) must be removed separately by the
+        caller, otherwise the boot-time reindexer will re-import it.
+        """
+        c = self._conn()
+        with self.transaction():
+            n = c.execute("SELECT COUNT(*) AS n FROM detections WHERE job_id=?",
+                          (job_id,)).fetchone()["n"]
+            c.execute("DELETE FROM detections WHERE job_id=?", (job_id,))
+            c.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        return n
+
+    def clear_all(self) -> dict[str, int]:
+        """Wipe all jobs + detections (and the derived rule_feedback view).
+
+        Suppressions are intentionally preserved — they are analyst config,
+        not scan output, and round-trip through suppressions/*.json. Returns
+        a small report of how many rows were removed.
+        """
+        c = self._conn()
+        with self.transaction():
+            jobs = c.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()["n"]
+            dets = c.execute("SELECT COUNT(*) AS n FROM detections").fetchone()["n"]
+            c.execute("DELETE FROM detections")
+            c.execute("DELETE FROM jobs")
+            c.execute("DELETE FROM rule_feedback")
+        return {"jobs": jobs, "detections": dets}
+
     # ------------------------------------------------------------ detections
 
     @staticmethod

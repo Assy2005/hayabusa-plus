@@ -68,3 +68,4 @@ __pycache__/
 
 # preview server config (local)
 .claude/launch.json
+dist/
