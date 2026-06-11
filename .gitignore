@@ -65,3 +65,6 @@ __pycache__/
 /lookups/urlhaus_urls.txt
 /lookups/feodo_c2_ips.txt
 /lookups/*.meta.json
+
+# preview server config (local)
+.claude/launch.json

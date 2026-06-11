@@ -20,15 +20,28 @@ console.log("[app] app.js v2026-05-21-c executing");
   const localizeStatus = (s) => STATUS_JA[s] || s;
 
   // -------- tabs --------
-  $$(".tab").forEach(t => t.onclick = () => {
-    $$(".tab").forEach(x => x.classList.toggle("active", x === t));
-    const id = "tab-" + t.dataset.tab;
+  // Switch to a tab by its data-tab name. Centralised so home-screen
+  // shortcut cards and in-app pivots can reuse it.
+  function switchTab(name) {
+    $$(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
+    const id = "tab-" + name;
     $$(".tab-panel").forEach(p => p.classList.toggle("active", p.id === id));
-    if (t.dataset.tab === "results") refreshJobs();
-    if (t.dataset.tab === "rules") { loadRules(); loadFeedback(); loadSuppressions(); loadLookups(); }
-    if (t.dataset.tab === "dashboard") loadDashboard();
-    if (t.dataset.tab === "hunt") initHunt();
-    if (t.dataset.tab === "hosts") loadHosts();
+    if (name === "results") refreshJobs();
+    if (name === "rules") { loadRules(); loadFeedback(); loadSuppressions(); loadLookups(); }
+    if (name === "dashboard") loadDashboard();
+    if (name === "hunt") initHunt();
+    if (name === "hosts") loadHosts();
+  }
+  $$(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+
+  // ホーム画面の 3 ステップカード → 該当タブへ
+  $$(".home-step").forEach(step => {
+    step.onclick = () => { const g = step.dataset.goto; if (g) switchTab(g); };
+  });
+  // 空状態などからの「○○へ」ボタン (data-goto-tab) を委譲で拾う
+  document.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-goto-tab]");
+    if (el) { e.preventDefault(); switchTab(el.dataset.gotoTab); }
   });
 
   // -------- health --------
@@ -782,6 +795,16 @@ console.log("[app] app.js v2026-05-21-c executing");
     const r = await fetch("/api/jobs");
     const jobs = await r.json();
     const tb = $("#jobs-table tbody"); tb.innerHTML = "";
+    if (!jobs.length) {
+      tb.innerHTML = `<tr><td colspan="6">
+        <div class="empty-state">
+          <div class="icon">📋</div>
+          <div class="title">まだスキャン結果がありません</div>
+          まずはログを読み込んでスキャンしてみましょう。
+          <div class="cta"><button class="primary" data-goto-tab="scan">🔍 スキャンへ進む</button></div>
+        </div></td></tr>`;
+      return;
+    }
     jobs.forEach(j => {
       const tr = document.createElement("tr");
       tr.innerHTML = `<td><code>${j.id}</code></td>
@@ -1574,8 +1597,24 @@ console.log("[app] app.js v2026-05-21-c executing");
 
   function renderHuntList(host) {
     if (!huntLastSearch || !huntLastSearch.detections.length) {
-      host.innerHTML = `<div class="muted small" style="padding:14px">
-        該当する検知はありません。条件を緩めるか「リセット」してください。</div>`;
+      // 検知データ自体が 0 件なのか、条件に合わないだけなのかで案内を変える
+      const noDataAtAll = huntLastSearch && huntLastSearch.total === 0
+        && !$("#hunt-host").value && !$("#hunt-q").value
+        && !document.querySelector("#hunt-levels .chip-btn.active");
+      if (noDataAtAll) {
+        host.innerHTML = `<div class="empty-state">
+          <div class="icon">🔎</div>
+          <div class="title">まださがせるデータがありません</div>
+          スキャンを実行すると、ここから過去の結果を自由にさがせます。
+          <div class="cta"><button class="primary" data-goto-tab="scan">🔍 スキャンへ進む</button></div>
+        </div>`;
+      } else {
+        host.innerHTML = `<div class="empty-state">
+          <div class="icon">🔍</div>
+          <div class="title">条件に合う項目がありませんでした</div>
+          条件をゆるめるか、左の「リセット」を押してやり直してください。
+        </div>`;
+      }
       return;
     }
     const rows = huntLastSearch.detections;
@@ -1918,11 +1957,13 @@ console.log("[app] app.js v2026-05-21-c executing");
         return;
       }
       if (!d.hosts.length) {
-        tb.innerHTML = `<tr><td colspan="10" class="empty-state">
-          <div class="icon">🖥️</div>
-          <div class="title">ホストが見つかりません</div>
-          まずスキャンタブから EVTX を取り込んでください。
-        </td></tr>`;
+        tb.innerHTML = `<tr><td colspan="10">
+          <div class="empty-state">
+            <div class="icon">💻</div>
+            <div class="title">まだパソコンの情報がありません</div>
+            スキャンを実行すると、ここにパソコンごとの危険度が並びます。
+            <div class="cta"><button class="primary" data-goto-tab="scan">🔍 スキャンへ進む</button></div>
+          </div></td></tr>`;
         return;
       }
       d.hosts.forEach(h => {
@@ -2109,9 +2150,79 @@ console.log("[app] app.js v2026-05-21-c executing");
     } catch { /* ignore */ }
   }
 
+  // -------- 用語ツールチップ (専門用語に hover 解説) --------
+  // 専門用語を含む本文を走査し、最初の 1 回だけ小さな解説ポップを付ける。
+  // code / a / button / input などは触らないので表示は壊れない。
+  const GLOSSARY = {
+    "EVTX": "<b>EVTX</b><br>Windows があらゆる出来事を記録するログファイル。拡張子は .evtx。これを読んで攻撃の痕跡をさがします。",
+    "Sigma": "<b>Sigma</b><br>「あやしい動き」の見つけ方を、世界共通の書式で書いた検出ルールのこと。",
+    "ATT&CK": "<b>ATT&amp;CK (アタック)</b><br>世界共通の「攻撃の手口カタログ」。MITRE という団体が整理しています。",
+    "IoC": "<b>IoC</b><br>すでに知られている「悪いもの」(ファイルのハッシュ・URL・IP 等) のリスト。",
+    "Sysmon": "<b>Sysmon</b><br>Windows の動作を、より細かく記録してくれる追加ツール。",
+    "DFIR": "<b>DFIR</b><br>サイバー攻撃を受けた「後」に、何が起きたかを調べる作業のこと。",
+    "プロセスツリー": "<b>プロセスツリー</b><br>どのプログラムが、どのプログラムを起動したか、という親子関係のこと。",
+  };
+
+  function installGlossary() {
+    const root = document.querySelector("main");
+    if (!root) return;
+    const used = new Set();
+    // 走査対象から除外するタグ
+    const SKIP = new Set(["CODE","A","BUTTON","INPUT","SELECT","OPTION",
+                          "TEXTAREA","SCRIPT","STYLE","PRE"]);
+    // 用語を長い順に (ATT&CK が AT より先に当たるように)
+    const terms = Object.keys(GLOSSARY).sort((a,b)=>b.length-a.length);
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        let p = node.parentNode;
+        while (p && p !== root) {
+          if (p.nodeType === 1) {
+            if (SKIP.has(p.tagName)) return NodeFilter.FILTER_REJECT;
+            if (p.classList && p.classList.contains("term")) return NodeFilter.FILTER_REJECT;
+          }
+          p = p.parentNode;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const textNodes = [];
+    let n; while ((n = walker.nextNode())) textNodes.push(n);
+
+    for (const node of textNodes) {
+      let text = node.nodeValue;
+      // この text 内で最初に見つかる未使用の用語を 1 つだけ処理
+      for (const term of terms) {
+        if (used.has(term)) continue;
+        const idx = text.indexOf(term);
+        if (idx < 0) continue;
+        // 前後がラテン英数字なら単語の一部とみなしてスキップ (日本語語中はOK)
+        const before = text[idx-1] || "", after = text[idx+term.length] || "";
+        if (/[A-Za-z0-9]/.test(before) || /[A-Za-z0-9]/.test(after)) continue;
+        used.add(term);
+        const span = document.createElement("span");
+        span.className = "term";
+        span.tabIndex = 0;
+        span.appendChild(document.createTextNode(term));
+        const q = document.createElement("span");
+        q.className = "term-q"; q.textContent = "?";
+        span.appendChild(q);
+        const pop = document.createElement("span");
+        pop.className = "term-pop"; pop.innerHTML = GLOSSARY[term];
+        span.appendChild(pop);
+        const after_node = node.splitText(idx);
+        after_node.nodeValue = after_node.nodeValue.slice(term.length);
+        node.parentNode.insertBefore(span, after_node);
+        break; // この text ノードは 1 用語で打ち切り
+      }
+    }
+  }
+
   // boot
   health(); refreshWorkspace(); refreshJobs(); updateScanButton(); loadSystemInfo();
   refreshStatusBar();
+  installGlossary();
   setInterval(refreshWorkspace, 5000);
   setInterval(refreshStatusBar, 15000);   // status bar refresh
 })();

@@ -13,20 +13,70 @@
       <span class="title">Hayabusa <span class="muted" id="ver">…</span></span>
     </div>
     <nav>
-      <button data-tab="scan" class="tab active">スキャン</button>
-      <button data-tab="dashboard" class="tab">ダッシュボード</button>
-      <button data-tab="results" class="tab">結果</button>
-      <button data-tab="hunt" class="tab">ハント</button>
-      <button data-tab="hosts" class="tab">ホスト</button>
-      <button data-tab="rules" class="tab">ルール</button>
-      <button data-tab="about" class="tab">情報</button>
+      <button data-tab="home" class="tab active">🏠 ホーム</button>
+      <button data-tab="scan" class="tab">🔍 スキャン</button>
+      <button data-tab="dashboard" class="tab">📊 全体ビュー</button>
+      <button data-tab="results" class="tab">📋 結果</button>
+      <button data-tab="hunt" class="tab">🔎 さがす</button>
+      <button data-tab="hosts" class="tab">💻 パソコン別</button>
+      <button data-tab="rules" class="tab">📖 検出ルール</button>
+      <button data-tab="about" class="tab">ℹ️ 情報</button>
     </nav>
     <div class="health" id="health" title="ヘルス状態">●</div>
   </header>
 
   <main>
+    <!-- ホーム / ウェルカム -->
+    <section id="tab-home" class="tab-panel active">
+      <div class="card scroll" style="align-items:center">
+        <div style="width:100%;max-width:1040px">
+          <div class="home-hero">
+            <div class="home-logo">🦅</div>
+            <h1>hayabusa-plus へようこそ</h1>
+            <p>パソコンに残った記録から、あやしい動きを見つけ出すツールです。<br/>
+               下の 3 ステップで始められます。</p>
+          </div>
+
+          <div class="home-steps">
+            <div class="home-step" data-goto="scan">
+              <div class="hs-num">1</div>
+              <div class="hs-icon">🔍</div>
+              <h3>ログを選ぶ</h3>
+              <p>パソコンの記録ファイルを選ぶか、<br/>
+                 「このパソコンを検査」を押すだけ。</p>
+            </div>
+            <div class="home-step" data-goto="scan">
+              <div class="hs-num">2</div>
+              <div class="hs-icon">▶️</div>
+              <h3>スキャンする</h3>
+              <p>ボタンを 1 つ押すと、<br/>
+                 あやしい動きを自動でさがします。</p>
+            </div>
+            <div class="home-step" data-goto="results">
+              <div class="hs-num">3</div>
+              <div class="hs-icon">📋</div>
+              <h3>結果を見る</h3>
+              <p>見つかった項目をクリックすると、<br/>
+                 意味と対応方法が日本語で出ます。</p>
+            </div>
+          </div>
+
+          <div class="home-foot">
+            <p>困ったら各画面の上にある青い説明バーを読んでください。<br/>
+               <a href="https://github.com/Assy2005/hayabusa-plus" target="_blank" rel="noopener">github.com/Assy2005/hayabusa-plus</a></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- スキャン -->
-    <section id="tab-scan" class="tab-panel active">
+    <section id="tab-scan" class="tab-panel">
+      <div class="tab-intro">
+        <span class="ti-icon">🔍</span>
+        <span class="ti-text"><strong>ここでは、ログを読み込んで「あやしい動き」をさがします。</strong>
+          左で対象を選び、右で設定して、下のボタンを押すだけ。
+          初めてなら「標準」設定のままで OK です。</span>
+      </div>
 
       <!-- 上段: 左 (対象) | 右 (設定) — 高さは自動で main の残りを埋める -->
       <div class="scan-grid">
@@ -198,6 +248,11 @@
 
     <!-- ダッシュボード -->
     <section id="tab-dashboard" class="tab-panel">
+      <div class="tab-intro">
+        <span class="ti-icon">📊</span>
+        <span class="ti-text"><strong>ここでは、これまでの検出結果を「全体像」で見られます。</strong>
+          重大なものが何件あるか、どのパソコンが多いか、時間ごとの推移などが一目で分かります。</span>
+      </div>
       <div class="card">
         <div class="dash-controls">
           <label>対象ジョブ
@@ -266,6 +321,12 @@
 
     <!-- 結果 -->
     <section id="tab-results" class="tab-panel">
+      <div class="tab-intro">
+        <span class="ti-icon">📋</span>
+        <span class="ti-text"><strong>ここでは、スキャンの結果を 1 件ずつ確認できます。</strong>
+          上で調べたいスキャンを開き、下の表で気になる項目をクリックすると、
+          「何が起きたか」「次にすべきこと」が日本語で表示されます。</span>
+      </div>
       <div class="card">
         <h2>スキャン履歴</h2>
         <table id="jobs-table">
@@ -398,6 +459,12 @@
 
     <!-- ハント -->
     <section id="tab-hunt" class="tab-panel">
+      <div class="tab-intro">
+        <span class="ti-icon">🔎</span>
+        <span class="ti-text"><strong>ここでは、過去すべての結果から条件をしぼって「さがす」ことができます。</strong>
+          左のボタン（例:「直近24hの重大」）を押すと、よくある探し方をすぐ試せます。
+          見つけた結果は CSV で書き出せます。</span>
+      </div>
       <div class="hunt-grid">
         <!-- 左: 検索フォーム + プリセット -->
         <div class="card hunt-form">
@@ -512,6 +579,11 @@
 
     <!-- ホスト資産ビュー -->
     <section id="tab-hosts" class="tab-panel">
+      <div class="tab-intro">
+        <span class="ti-icon">💻</span>
+        <span class="ti-text"><strong>ここでは、パソコンごとに「危険度」をつけて並べます。</strong>
+          上から順に注意が必要なパソコンです。クリックすると、そのパソコンで何が多いか詳しく見られます。</span>
+      </div>
       <div class="card hosts-overview">
         <div class="hosts-head">
           <h2>ホスト資産</h2>
@@ -563,6 +635,12 @@
 
     <!-- ルール -->
     <section id="tab-rules" class="tab-panel">
+      <div class="tab-intro">
+        <span class="ti-icon">📖</span>
+        <span class="ti-text"><strong>ここでは、検出に使う「ルール」と「悪いものリスト」を確認・更新できます。</strong>
+          ふだんは触らなくて大丈夫です。最新の脅威情報に更新したいときは「フィードを更新」を押します。</span>
+      </div>
+      <div class="rules-row">
       <div class="card">
         <h2>読み込まれているルールセット</h2>
         <div id="rules-summary" class="muted">…</div>
@@ -610,6 +688,7 @@
           <tbody></tbody>
         </table>
       </div>
+      </div><!-- /.rules-row -->
     </section>
 
     <!-- 情報 -->
