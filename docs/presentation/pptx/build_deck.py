@@ -668,31 +668,46 @@ def slide_dev_anomaly(prs, n, total):
     for i, (icon, name, cond, story) in enumerate(types):
         x = 0.6 + i * (card_w + 0.2)
         y = 2.45
-        add_card(s, x, y, card_w, 3.35, fill=PANEL, accent_left=ACCENT)
-        add_text(s, icon, x=x + 0.2, y=y + 0.2, w=1.0, h=0.7,
-                 size=30, color=ACCENT)
-        add_text(s, name, x=x + 0.2, y=y + 0.95, w=card_w - 0.3, h=0.5,
-                 size=18, color=TEXT, font=FONT_HEAD, bold=True)
-        add_text(s, cond, x=x + 0.2, y=y + 1.55, w=card_w - 0.4, h=0.9,
+        add_card(s, x, y, card_w, 3.0, fill=PANEL, accent_left=ACCENT)
+        add_text(s, icon, x=x + 0.2, y=y + 0.18, w=1.0, h=0.65,
+                 size=28, color=ACCENT)
+        add_text(s, name, x=x + 0.2, y=y + 0.85, w=card_w - 0.3, h=0.5,
+                 size=17, color=TEXT, font=FONT_HEAD, bold=True)
+        add_text(s, cond, x=x + 0.2, y=y + 1.4, w=card_w - 0.4, h=0.9,
                  size=11, color=TEXT, line_spacing=1.4)
-        add_text(s, "例: " + story, x=x + 0.2, y=y + 2.6, w=card_w - 0.4,
-                 h=0.6, size=10, color=MUTED, italic=True, line_spacing=1.3)
+        add_text(s, "例: " + story, x=x + 0.2, y=y + 2.4, w=card_w - 0.4,
+                 h=0.5, size=10, color=MUTED, italic=True, line_spacing=1.3)
 
-    # 実例は「いま手元の DB で再現できる数字」だけを使う (出典も明記)。
-    add_card(s, 0.6, 6.15, 12.1, 0.95, fill=PANEL_SOFT, line=PANEL_SOFT)
-    add_text(s, "💡 実例:  自分の PC のログから、疑わしい PowerShell 実行が",
-             x=1.5, y=6.18, w=5.9, h=0.5, size=14,
-             color=TEXT, anchor=MSO_ANCHOR.MIDDLE)
-    add_text(s, "いつもの 約123 倍",
-             x=7.35, y=6.18, w=2.3, h=0.5, size=19,
-             color=ACCENT_DK, font=FONT_HEAD, bold=True,
-             anchor=MSO_ANCHOR.MIDDLE)
-    add_text(s, "の時間帯を自動検出。",
-             x=9.7, y=6.18, w=2.7, h=0.5, size=14,
-             color=TEXT, anchor=MSO_ANCHOR.MIDDLE)
-    add_text(s, "(開発者自身の PC を実際にスキャンした結果: 1 時間に 117 回・平常 0.95 回/h。実演で再現できます)",
-             x=0.6, y=6.68, w=12.1, h=0.35, size=10.5, color=MUTED,
-             align=PP_ALIGN.CENTER)
+    # ---- 実例: 「平常時 vs その時間帯」を棒の長さで比較 ----
+    # 数字は今の DB で再現できる実測値のみ使う (自分の PC のスキャン結果)。
+    add_card(s, 0.6, 5.65, 12.1, 1.3, fill=PANEL_SOFT, line=PANEL_SOFT)
+    add_text(s, "💡 実例:  自分の PC を実際にスキャン → 「疑わしい PowerShell 実行」の急増を自動検出",
+             x=0.95, y=5.78, w=11.5, h=0.4, size=13.5, color=TEXT, bold=True)
+
+    def compare_row(y, label, bar_w, bar_color, value, *, value_bold=False,
+                    value_color=TEXT):
+        add_text(s, label, x=0.95, y=y, w=3.05, h=0.3, size=11, color=MUTED,
+                 anchor=MSO_ANCHOR.MIDDLE)
+        track = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                   Inches(4.1), Inches(y + 0.04),
+                                   Inches(6.0), Inches(0.22))
+        track.fill.solid(); track.fill.fore_color.rgb = PANEL
+        track.line.color.rgb = LINE; track.shadow.inherit = False
+        bar = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                 Inches(4.1), Inches(y + 0.04),
+                                 Inches(max(0.1, bar_w)), Inches(0.22))
+        bar.fill.solid(); bar.fill.fore_color.rgb = bar_color
+        bar.line.fill.background(); bar.shadow.inherit = False
+        add_text(s, value, x=10.25, y=y, w=2.35, h=0.3, size=11.5,
+                 color=value_color, bold=value_bold,
+                 anchor=MSO_ANCHOR.MIDDLE)
+
+    # 平常 0.94 回/h vs 当該時間帯 110 回/h (約117倍) — 実測値
+    compare_row(6.25, "平常時 (この PC の全期間平均)", 0.1, MUTED,
+                "1 時間に 約1回")
+    compare_row(6.62, "ある日の 13 時台", 6.0, ACCENT,
+                "1 時間に 110回 (約117倍)", value_bold=True,
+                value_color=ACCENT_DK)
     page_no(s, n, total)
 
 
