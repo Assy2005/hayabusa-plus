@@ -641,6 +641,10 @@ footer.status-bar .right{margin-left:auto;display:flex;gap:10px}
 
 /* === スキャン進捗バー + 中止ボタン === */
 .scan-progress{flex:0 0 auto;display:flex;flex-direction:column;gap:5px;margin:4px 0 8px}
+/* `.scan-progress{display:flex}` は UA の `[hidden]{display:none}` と詳細度が
+   同じで author 側が勝つため、hidden 属性だけでは消えない。明示的に上書きする。 */
+.scan-progress[hidden]{display:none !important}
+.cancel-btn[hidden]{display:none !important}
 .progress-track{height:10px;border-radius:99px;background:var(--code-inline-bg);
   overflow:hidden;position:relative}
 .progress-fill{height:100%;border-radius:99px;
