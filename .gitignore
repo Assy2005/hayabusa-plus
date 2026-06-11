@@ -69,3 +69,6 @@ __pycache__/
 # preview server config (local)
 .claude/launch.json
 dist/
+docs/presentation/pptx/_qa/
+docs/presentation/pptx/_assets/
+~$*.pptx
