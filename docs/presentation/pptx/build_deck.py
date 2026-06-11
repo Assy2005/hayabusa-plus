@@ -678,41 +678,28 @@ def slide_dev_anomaly(prs, n, total):
         add_text(s, "例: " + story, x=x + 0.2, y=y + 2.28, w=card_w - 0.4,
                  h=0.5, size=10, color=MUTED, italic=True, line_spacing=1.3)
 
-    # ---- 実例: 「平常時 vs その時間帯」を棒の長さで比較 ----
-    # 数字は今の DB で再現できる実測値のみ。中身を確認した結果 (無害な開発
-    # 作業) まで正直に書く — 異常検知は「気づかせるレーダー」であって
-    # 「攻撃の断定」ではない、という正しい説明にもなる。
+    # ---- 締め: ルール検知との違いを対比で示す (データの主張はしない) ----
     add_card(s, 0.6, 5.5, 12.1, 1.5, fill=PANEL_SOFT, line=PANEL_SOFT)
-    add_text(s, "💡 実例:  自分の PC のスキャンで、「疑わしい PowerShell 実行」の急増に自動で気づけた",
-             x=0.95, y=5.62, w=11.5, h=0.4, size=13.5, color=TEXT, bold=True)
 
-    def compare_row(y, label, bar_w, bar_color, value, *, value_bold=False,
-                    value_color=TEXT):
-        add_text(s, label, x=0.95, y=y, w=3.05, h=0.3, size=11, color=MUTED,
-                 anchor=MSO_ANCHOR.MIDDLE)
-        track = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
-                                   Inches(4.1), Inches(y + 0.04),
-                                   Inches(6.0), Inches(0.22))
-        track.fill.solid(); track.fill.fore_color.rgb = PANEL
-        track.line.color.rgb = LINE; track.shadow.inherit = False
-        bar = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
-                                 Inches(4.1), Inches(y + 0.04),
-                                 Inches(max(0.1, bar_w)), Inches(0.22))
-        bar.fill.solid(); bar.fill.fore_color.rgb = bar_color
-        bar.line.fill.background(); bar.shadow.inherit = False
-        add_text(s, value, x=10.25, y=y, w=2.35, h=0.3, size=11.5,
-                 color=value_color, bold=value_bold,
-                 anchor=MSO_ANCHOR.MIDDLE)
+    add_text(s, "📏 ルールによる検知 (既存の方法)",
+             x=1.0, y=5.72, w=5.4, h=0.4, size=13.5, color=TEXT, bold=True)
+    add_text(s, "事前に知っている「悪い特徴」と一致したら警告。\n既に知られている手口には確実で強い。",
+             x=1.0, y=6.14, w=5.4, h=0.75, size=11.5, color=MUTED,
+             line_spacing=1.4)
 
-    # 平常 0.94 回/h vs 当該時間帯 110 回/h (約117倍) — 実測値
-    compare_row(6.06, "平常時 (この PC の全期間平均)", 0.1, MUTED,
-                "1 時間に 約1回")
-    compare_row(6.42, "ある日の 13 時台", 6.0, ACCENT,
-                "1 時間に 110回 (約117倍)", value_bold=True,
-                value_color=ACCENT_DK)
-    add_text(s, "中身を確認すると無害な開発作業と判定できた。役目は「普段と違う」への気づき — 中身の確認まで同じ画面で完結します。",
-             x=0.95, y=6.74, w=11.5, h=0.32, size=10.5, color=MUTED,
-             align=PP_ALIGN.CENTER)
+    # 中央の区切り線
+    div = s.shapes.add_shape(MSO_SHAPE.RECTANGLE,
+                             Inches(6.62), Inches(5.75),
+                             Inches(0.018), Inches(1.0))
+    div.fill.solid(); div.fill.fore_color.rgb = LINE
+    div.line.fill.background(); div.shadow.inherit = False
+
+    add_text(s, "📈 振舞いによる検知 (今回自作した分析)",
+             x=7.0, y=5.72, w=5.4, h=0.4, size=13.5, color=ACCENT_DK,
+             bold=True)
+    add_text(s, "「普段との違い」に反応して知らせる。\nルールがまだ無い未知の手口への「気づき」になる。",
+             x=7.0, y=6.14, w=5.4, h=0.75, size=11.5, color=MUTED,
+             line_spacing=1.4)
     page_no(s, n, total)
 
 
