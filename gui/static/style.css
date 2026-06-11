@@ -638,3 +638,22 @@ footer.status-bar .right{margin-left:auto;display:flex;gap:10px}
 .home-foot{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}
 .home-foot a{color:var(--accent-2);text-decoration:none}
 .home-foot a:hover{text-decoration:underline}
+
+/* === スキャン進捗バー + 中止ボタン === */
+.scan-progress{flex:0 0 auto;display:flex;flex-direction:column;gap:5px;margin:4px 0 8px}
+.progress-track{height:10px;border-radius:99px;background:var(--code-inline-bg);
+  overflow:hidden;position:relative}
+.progress-fill{height:100%;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),#60A5FA)}
+/* indeterminate: 流れるストライプで「動作中」を示す (真の % は取れないため) */
+.progress-fill.indeterminate{position:absolute;width:40%;left:-40%;
+  animation:prog-slide 1.3s ease-in-out infinite}
+@keyframes prog-slide{
+  0%{left:-40%;width:40%}
+  50%{left:30%;width:55%}
+  100%{left:100%;width:40%}}
+.progress-note{text-align:center}
+.cancel-btn{margin-left:auto;background:#fff;border:1px solid var(--bad);
+  color:var(--bad);font-weight:600;font-size:12px;padding:5px 14px;border-radius:7px}
+.cancel-btn:hover{background:var(--bad);color:#fff;border-color:var(--bad)}
+.cancel-btn:disabled{opacity:.5}

@@ -15,7 +15,7 @@ console.log("[app] app.js v2026-05-21-c executing");
   // バックエンドの英語ステータスを日本語表示に置き換える。
   const STATUS_JA = {
     queued: "待機中", running: "実行中", done: "完了",
-    failed: "失敗", cancelled: "キャンセル", idle: "待機中",
+    failed: "失敗", cancelled: "中止", idle: "待機中",
   };
   const localizeStatus = (s) => STATUS_JA[s] || s;
 
@@ -563,11 +563,28 @@ console.log("[app] app.js v2026-05-21-c executing");
     $("#m-count").textContent = "0";
     $("#m-status").textContent = localizeStatus("queued");
     $("#m-elapsed").textContent = "0秒";
+    // 進捗バー + 中止ボタンを表示
+    $("#scan-progress").hidden = false;
+    $("#progress-note").textContent = "スキャンの準備をしています…";
+    const cancelBtn = $("#cancel-scan-btn");
+    cancelBtn.hidden = false;
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = "■ 中止";
+    cancelBtn.onclick = () => cancelScan(jobId, cancelBtn);
+
     if (liveES) liveES.close();
     const startedAt = Date.now();
     const tick = setInterval(() => {
       $("#m-elapsed").textContent = Math.round((Date.now() - startedAt) / 1000) + "秒";
     }, 1000);
+
+    // スキャン終了時に進捗 UI を片付ける共通処理
+    const finishUI = (statusText) => {
+      clearInterval(tick);
+      $("#scan-progress").hidden = true;
+      cancelBtn.hidden = true;
+      if (statusText) $("#progress-note").textContent = statusText;
+    };
 
     liveES = new EventSource(`/api/jobs/${jobId}/stream`);
     liveES.onmessage = (ev) => {
@@ -576,16 +593,26 @@ console.log("[app] app.js v2026-05-21-c executing");
       if (msg.type === "state") {
         $("#m-status").textContent = localizeStatus(msg.job.status);
         $("#m-status").className = "status-" + msg.job.status;
+        if (msg.job.status === "running") {
+          $("#progress-note").textContent = msg.job.total_files
+            ? `${msg.job.total_files.toLocaleString()} 件のログを解析中…`
+            : "解析中…";
+        }
         if (["done", "failed", "cancelled"].includes(msg.job.status)) {
-          clearInterval(tick);
+          finishUI();
+        }
+      } else if (msg.type === "meta") {
+        // 規模 (総ログ件数) が分かったら note に反映
+        if (msg.total_files != null) {
+          $("#progress-note").textContent =
+            `${Number(msg.total_files).toLocaleString()} 件のログを解析中…`;
         }
       } else if (msg.type === "detection") {
         $("#m-count").textContent = msg.n;
-        // Pass the per-job line number so the row can fetch its enriched
-        // detail (rule description, ATT&CK info, related events).
         appendDetection(msg.event, msg.n);
       } else if (msg.type === "complete") {
-        liveES.close(); liveES = null; clearInterval(tick);
+        liveES.close(); liveES = null;
+        finishUI();
         refreshJobs();
       } else if (msg.type === "error") {
         const row = document.createElement("div");
@@ -594,7 +621,27 @@ console.log("[app] app.js v2026-05-21-c executing");
         $("#live-feed").appendChild(row);
       }
     };
-    liveES.onerror = () => { clearInterval(tick); };
+    liveES.onerror = () => { finishUI(); };
+  }
+
+  // スキャンを中止する。サーバ側で subprocess を terminate/kill する。
+  async function cancelScan(jobId, btn) {
+    if (!confirm("実行中のスキャンを中止しますか?\n(ここまでに見つかった結果は残ります)")) return;
+    btn.disabled = true;
+    btn.textContent = "中止中…";
+    $("#progress-note").textContent = "中止しています…";
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+      const d = await r.json();
+      if (d.error) {
+        $("#progress-note").textContent = "中止できませんでした: " + d.error;
+        btn.disabled = false; btn.textContent = "■ 中止";
+      }
+      // 成功時は SSE の complete / state(cancelled) が UI を片付ける
+    } catch (e) {
+      $("#progress-note").textContent = "通信エラー: " + e;
+      btn.disabled = false; btn.textContent = "■ 中止";
+    }
   }
 
   function appendDetection(ev, lineNo) {

@@ -183,6 +183,7 @@ class Job:
         "stdout_log", "stderr_log", "result_jsonl", "result_summary",
         "subscribers", "lock", "detection_count", "last_event_at",
         "_indexed_lines_at_start",
+        "proc", "total_files", "cancel_requested",
     )
 
     def __init__(self, kind: str, args: list[str]):
@@ -204,6 +205,9 @@ class Job:
         self.detection_count = 0
         self.last_event_at = self.started_at
         self._indexed_lines_at_start = 0
+        self.proc = None                # subprocess handle while running
+        self.total_files = None         # parsed from Hayabusa stdout
+        self.cancel_requested = False
 
     def to_dict(self):
         return {
@@ -214,8 +218,28 @@ class Job:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "detection_count": self.detection_count,
+            "total_files": self.total_files,
             "args": self.args,
         }
+
+    def cancel(self) -> bool:
+        """Request cancellation of a running scan. Returns True if a live
+        process was signalled. Safe to call repeatedly."""
+        self.cancel_requested = True
+        proc = self.proc
+        if proc is None or proc.poll() is not None:
+            return False
+        try:
+            proc.terminate()
+            # Give it a moment, then hard-kill if still alive.
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f"[cancel] failed for {self.id}: {exc}\n")
+            return False
 
     def persist(self):
         """Mirror the in-memory job to SQLite so it survives a restart."""
@@ -407,11 +431,19 @@ def run_job(job: Job, params: dict):
     job._indexed_lines_at_start = STORE.indexed_lines(job.id)
     tailer = threading.Thread(target=tail_results, args=(job, stop_event), daemon=True)
     tailer.start()
+    # Watch stdout for the "Total event log files" line so the UI can show
+    # the scale of the scan. Hayabusa doesn't emit a real progress %% when
+    # its output is piped (the indicatif bar is TTY-only), so this is the
+    # best determinate signal we can surface.
+    meta_thread = threading.Thread(target=_watch_stdout_meta,
+                                   args=(job, stop_event), daemon=True)
+    meta_thread.start()
 
     try:
         with open(job.stdout_log, "wb") as out, open(job.stderr_log, "wb") as err:
             # cwd=BIN_DIR so hayabusa finds its sibling rules/ + config/ dirs.
             proc = subprocess.Popen(argv, stdout=out, stderr=err, cwd=str(BIN_DIR))
+            job.proc = proc
             job.exit_code = proc.wait()
     except FileNotFoundError as exc:
         job.publish({"type": "error", "stage": "spawn", "msg": str(exc)})
@@ -422,13 +454,37 @@ def run_job(job: Job, params: dict):
         time.sleep(0.6)
         stop_event.set()
         tailer.join(timeout=2)
+        meta_thread.join(timeout=1)
+        job.proc = None
 
-    if job.status != "failed":
+    if job.cancel_requested:
+        job.status = "cancelled"
+    elif job.status != "failed":
         job.status = "done" if job.exit_code == 0 else "failed"
     job.finished_at = time.time()
     job.persist()
     job.publish({"type": "state", "job": job.to_dict()})
     job.publish({"type": "complete"})
+
+
+_TOTAL_FILES_RE = re.compile(r"Total event log files:\s*([\d,]+)")
+
+
+def _watch_stdout_meta(job: Job, stop_event: threading.Event):
+    """Poll the job's stdout log until the 'Total event log files: N' line
+    appears, then publish it once over SSE. Cheap and one-shot."""
+    while not stop_event.is_set() and job.total_files is None:
+        try:
+            if job.stdout_log.exists():
+                text = job.stdout_log.read_text(encoding="utf-8", errors="replace")
+                m = _TOTAL_FILES_RE.search(text)
+                if m:
+                    job.total_files = int(m.group(1).replace(",", ""))
+                    job.publish({"type": "meta", "total_files": job.total_files})
+                    return
+        except OSError:
+            pass
+        time.sleep(0.4)
 
 
 # ---------------------------------------------------------------------------
@@ -1076,6 +1132,20 @@ class Handler(BaseHTTPRequestHandler):
             register_job(job)
             threading.Thread(target=run_job, args=(job, params), daemon=True).start()
             self._send_json({"job_id": job.id}, 202)
+            return
+
+        m = re.match(r"^/api/jobs/([A-Za-z0-9_-]{6,64})/cancel$", path)
+        if m:
+            job = JOBS.get(m.group(1))
+            if not job:
+                self._send_json({"error": "not_found"}, 404)
+                return
+            if job.status not in ("running", "queued"):
+                self._send_json({"error": "not running", "status": job.status}, 409)
+                return
+            signalled = job.cancel()
+            self._send_json({"cancelled": True, "signalled": signalled,
+                             "status": job.status})
             return
 
         if path == "/api/upload":

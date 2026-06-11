@@ -220,7 +220,15 @@
             <div class="step-head">
               <span class="step-num">▶</span>
               <h2>進行中 <span class="muted small" id="live-jobid"></span></h2>
+              <button id="cancel-scan-btn" class="cancel-btn" hidden>■ 中止</button>
             </div>
+
+            <!-- 進捗バー (アニメ式) + 規模表示 -->
+            <div id="scan-progress" class="scan-progress" hidden>
+              <div class="progress-track"><div class="progress-fill indeterminate"></div></div>
+              <div class="progress-note muted small" id="progress-note">スキャン中…</div>
+            </div>
+
             <div class="metrics compact">
               <div><span id="m-count">0</span><label>検知</label></div>
               <div><span id="m-status">待機中</span><label>状態</label></div>
