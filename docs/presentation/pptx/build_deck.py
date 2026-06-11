@@ -668,21 +668,23 @@ def slide_dev_anomaly(prs, n, total):
     for i, (icon, name, cond, story) in enumerate(types):
         x = 0.6 + i * (card_w + 0.2)
         y = 2.45
-        add_card(s, x, y, card_w, 3.0, fill=PANEL, accent_left=ACCENT)
-        add_text(s, icon, x=x + 0.2, y=y + 0.18, w=1.0, h=0.65,
-                 size=28, color=ACCENT)
-        add_text(s, name, x=x + 0.2, y=y + 0.85, w=card_w - 0.3, h=0.5,
+        add_card(s, x, y, card_w, 2.85, fill=PANEL, accent_left=ACCENT)
+        add_text(s, icon, x=x + 0.2, y=y + 0.16, w=1.0, h=0.62,
+                 size=26, color=ACCENT)
+        add_text(s, name, x=x + 0.2, y=y + 0.8, w=card_w - 0.3, h=0.5,
                  size=17, color=TEXT, font=FONT_HEAD, bold=True)
-        add_text(s, cond, x=x + 0.2, y=y + 1.4, w=card_w - 0.4, h=0.9,
+        add_text(s, cond, x=x + 0.2, y=y + 1.33, w=card_w - 0.4, h=0.9,
                  size=11, color=TEXT, line_spacing=1.4)
-        add_text(s, "例: " + story, x=x + 0.2, y=y + 2.4, w=card_w - 0.4,
+        add_text(s, "例: " + story, x=x + 0.2, y=y + 2.28, w=card_w - 0.4,
                  h=0.5, size=10, color=MUTED, italic=True, line_spacing=1.3)
 
     # ---- 実例: 「平常時 vs その時間帯」を棒の長さで比較 ----
-    # 数字は今の DB で再現できる実測値のみ使う (自分の PC のスキャン結果)。
-    add_card(s, 0.6, 5.65, 12.1, 1.3, fill=PANEL_SOFT, line=PANEL_SOFT)
-    add_text(s, "💡 実例:  自分の PC を実際にスキャン → 「疑わしい PowerShell 実行」の急増を自動検出",
-             x=0.95, y=5.78, w=11.5, h=0.4, size=13.5, color=TEXT, bold=True)
+    # 数字は今の DB で再現できる実測値のみ。中身を確認した結果 (無害な開発
+    # 作業) まで正直に書く — 異常検知は「気づかせるレーダー」であって
+    # 「攻撃の断定」ではない、という正しい説明にもなる。
+    add_card(s, 0.6, 5.5, 12.1, 1.5, fill=PANEL_SOFT, line=PANEL_SOFT)
+    add_text(s, "💡 実例:  自分の PC のスキャンで、「疑わしい PowerShell 実行」の急増に自動で気づけた",
+             x=0.95, y=5.62, w=11.5, h=0.4, size=13.5, color=TEXT, bold=True)
 
     def compare_row(y, label, bar_w, bar_color, value, *, value_bold=False,
                     value_color=TEXT):
@@ -703,11 +705,14 @@ def slide_dev_anomaly(prs, n, total):
                  anchor=MSO_ANCHOR.MIDDLE)
 
     # 平常 0.94 回/h vs 当該時間帯 110 回/h (約117倍) — 実測値
-    compare_row(6.25, "平常時 (この PC の全期間平均)", 0.1, MUTED,
+    compare_row(6.06, "平常時 (この PC の全期間平均)", 0.1, MUTED,
                 "1 時間に 約1回")
-    compare_row(6.62, "ある日の 13 時台", 6.0, ACCENT,
+    compare_row(6.42, "ある日の 13 時台", 6.0, ACCENT,
                 "1 時間に 110回 (約117倍)", value_bold=True,
                 value_color=ACCENT_DK)
+    add_text(s, "中身を確認すると無害な開発作業と判定できた。役目は「普段と違う」への気づき — 中身の確認まで同じ画面で完結します。",
+             x=0.95, y=6.74, w=11.5, h=0.32, size=10.5, color=MUTED,
+             align=PP_ALIGN.CENTER)
     page_no(s, n, total)
 
 
