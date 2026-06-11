@@ -678,17 +678,21 @@ def slide_dev_anomaly(prs, n, total):
         add_text(s, "例: " + story, x=x + 0.2, y=y + 2.6, w=card_w - 0.4,
                  h=0.6, size=10, color=MUTED, italic=True, line_spacing=1.3)
 
+    # 実例は「いま手元の DB で再現できる数字」だけを使う (出典も明記)。
     add_card(s, 0.6, 6.15, 12.1, 0.95, fill=PANEL_SOFT, line=PANEL_SOFT)
-    add_text(s, "💡 実例:  ある PC で疑わしい動きが",
-             x=1.95, y=6.15, w=3.7, h=0.95, size=14,
+    add_text(s, "💡 実例:  自分の PC のログから、疑わしい PowerShell 実行が",
+             x=1.5, y=6.18, w=5.9, h=0.5, size=14,
              color=TEXT, anchor=MSO_ANCHOR.MIDDLE)
-    add_text(s, "いつもの 2,492 倍",
-             x=5.55, y=6.15, w=2.45, h=0.95, size=19,
+    add_text(s, "いつもの 約123 倍",
+             x=7.35, y=6.18, w=2.3, h=0.5, size=19,
              color=ACCENT_DK, font=FONT_HEAD, bold=True,
              anchor=MSO_ANCHOR.MIDDLE)
-    add_text(s, "発生していたのを自動検出。",
-             x=8.0, y=6.15, w=4.3, h=0.95, size=14,
+    add_text(s, "の時間帯を自動検出。",
+             x=9.7, y=6.18, w=2.7, h=0.5, size=14,
              color=TEXT, anchor=MSO_ANCHOR.MIDDLE)
+    add_text(s, "(開発者自身の PC を実際にスキャンした結果: 1 時間に 117 回・平常 0.95 回/h。実演で再現できます)",
+             x=0.6, y=6.68, w=12.1, h=0.35, size=10.5, color=MUTED,
+             align=PP_ALIGN.CENTER)
     page_no(s, n, total)
 
 
@@ -791,17 +795,24 @@ def main():
     slide_summary(prs, 12, total)       # 12 — まとめ
     slide_thanks(prs, total, total)     # 13 — おわり
 
-    # PowerPoint で開いていると上書きが失敗するので、その場合は別ファイルに退避。
-    out = Path(__file__).parent / "hayabusa-plus.pptx"
-    try:
-        prs.save(str(out))
-        print(f"OK -> {out}")
-    except PermissionError:
-        alt = Path(__file__).parent / "hayabusa-plus.new.pptx"
-        prs.save(str(alt))
-        print(f"(target was locked) -> {alt}")
-        print("→ PowerPoint を閉じてから build_deck.py を再実行するか、")
-        print("   hayabusa-plus.new.pptx を hayabusa-plus.pptx に上書きしてください。")
+    # PowerPoint で開いていると上書きが失敗するので、空いている名前に退避する。
+    base = Path(__file__).parent
+    candidates = [base / "hayabusa-plus.pptx",
+                  base / "hayabusa-plus.new.pptx"]
+    candidates += [base / f"hayabusa-plus.new{i}.pptx" for i in range(2, 6)]
+    for out in candidates:
+        try:
+            prs.save(str(out))
+            if out.name != "hayabusa-plus.pptx":
+                print(f"(hayabusa-plus.pptx was locked) -> {out}")
+                print("→ PowerPoint を閉じてから再実行すると本来の名前で保存されます。")
+            else:
+                print(f"OK -> {out}")
+            break
+        except PermissionError:
+            continue
+    else:
+        raise SystemExit("すべての保存先がロックされています。PowerPoint を閉じてください。")
     print(f"   slides: {len(prs.slides)}")
 
 
