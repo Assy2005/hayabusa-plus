@@ -257,21 +257,23 @@ level: critical
 
 ## 📚 同梱検知ルール
 
-`rules-custom/` に **11 本の高精度ルール** を同梱。攻撃者が機能を保ったまま回避しづらい特徴を多軸で AND 条件化しています。
+`rules-custom/` に **13 本の高精度ルール** を同梱。攻撃者が“やりたいこと”を保ったまま避けるのが難しい特徴を、複数組み合わせて (AND 条件) 検知することで誤検知を抑えています。
 
-| カテゴリ | ルール | 重要度 | 検知対象 |
+| カテゴリ | ルール | 重要度 | 何を見ているか |
 |---|---|---|---|
-| 🔓 認証情報窃取 | `lsass_comsvcs_minidump` | critical | LSASS ダンプ via comsvcs.dll |
-| 💀 永続化 | `service_install_userwritable_path` | high | ユーザー書込可能パスへのサービス設置 |
-| 🛡️ 防御回避 | `amsi_patch_triad` | high | PowerShell AMSI バイパス (3 トークン一致) |
-| 🌐 C2 | `certutil_remote_fetch` | critical | certutil による外部取得 |
-| 🧹 痕跡隠蔽 | `af_wevtutil_clear` | high | wevtutil でのログ消去 |
-| 🧹 痕跡隠蔽 | `af_eventlog_service_tamper` | critical | EventLog サービス停止 |
-| 🧹 痕跡隠蔽 | `af_vss_shadow_deletion` | critical | VSS 削除 (ランサム前兆) |
-| 🧹 痕跡隠蔽 | `af_audit_policy_weakened` | high | 監査ポリシ Success/Failure 除去 |
-| 🦠 IoC 照合 | `lookup_loldriver_load` | critical | LOLDrivers ハッシュ一致 |
-| 🦠 IoC 照合 | `lookup_malware_hash` | critical | MalwareBazaar ハッシュ一致 |
-| 🦠 IoC 照合 | `lookup_c2_url` | critical | URLhaus URL アクセス |
+| 🔓 認証情報の窃取 | `lsass_comsvcs_minidump` | critical | ログイン中のパスワード情報 (LSASS) をファイルに吸い出す手口 |
+| 💀 居座り (永続化) | `service_install_userwritable_path` | high | 誰でも書き換えられる場所のプログラムをサービス登録して常駐させる |
+| 💀 居座り (永続化) | `wmi_persistence_filter_to_consumer` | high | WMI を使い「特定の出来事をきっかけに自動実行」を仕込む |
+| 🛡️ 防御の回避 | `amsi_patch_triad` | high | PowerShell のウイルス検査 (AMSI) を無力化する |
+| 🌐 外部からの持ち込み | `certutil_remote_fetch` | critical | 正規ツール certutil を悪用して外部からファイルを取得する |
+| 🧹 痕跡隠蔽 | `af_wevtutil_clear` | high | wevtutil などでイベントログをまるごと消去する |
+| 🧹 痕跡隠蔽 | `af_eventlog_service_tamper` | critical | ログを記録するサービスそのものを停止・無効化する |
+| 🧹 痕跡隠蔽 | `anti_forensics_clear_then_change` | critical | 監査設定を変えた直後にログ消去、という“合わせ技” |
+| 🧹 痕跡隠蔽 | `af_vss_shadow_deletion` | critical | 復元用スナップショットの削除 (ランサムの前兆) |
+| 🧹 痕跡隠蔽 | `af_audit_policy_weakened` | high | 監査設定から記録項目を外して“見えなく”する |
+| 🦠 IoC 照合 | `lookup_loldriver_load` | critical | 悪用が知られた脆弱ドライバの読み込み (LOLDrivers 一致) |
+| 🦠 IoC 照合 | `lookup_malware_hash` | critical | 既知のマルウェアそのものの実行 (MalwareBazaar 一致) |
+| 🦠 IoC 照合 | `lookup_c2_url` | critical | 攻撃者の指令サーバとして知られる URL への通信 (URLhaus 一致) |
 
 各ルールには `falsepositives`、`evasion`、`notes` (回避コスト + バイパス手段) が必ず記述されています。詳細は [rules-custom/README.md](rules-custom/README.md)。
 
@@ -384,7 +386,7 @@ hayabusa-plus/
 │   ├── rule_index.py             # RuleID → YAML 逆引き
 │   └── static/                   # HTML / CSS / JS
 │
-├── rules-custom/                 # 自作 Sigma ルール (11 本)
+├── rules-custom/                 # 自作 Sigma ルール (13 本)
 ├── lookups/                      # IoC フィード保存先
 │   ├── feeds.yml                 # 取得対象マニフェスト
 │   └── *.txt                     # フィードデータ (gitignore)
@@ -413,7 +415,7 @@ hayabusa-plus/
 
 | メトリック | 値 |
 |---|---|
-| 自作 Sigma ルール | **11 本** (critical 5 / high 5 / experimental 1) |
+| 自作 Sigma ルール | **13 本** (critical 8 / high 5) |
 | エンジン拡張 LoC | 約 **400 行** (Rust) |
 | GUI コード LoC | 約 **3,300 行** (Python + JS + CSS) |
 | 外部 pip / npm 依存 | **0** |

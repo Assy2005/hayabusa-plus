@@ -921,6 +921,76 @@ def slide_thanks(prs, n, total):
              italic=True, align=PP_ALIGN.CENTER)
 
 
+def slide_appendix_rules(prs, total):
+    """付録: 同梱している検知ルール 13 本を、攻撃の流れ順に整理した一覧.
+
+    「13 本それぞれ何?」と質問されたとき用のバックアップ。発表本編 (1-15) の
+    あとに置く。説明は専門用語を避けた自然な日本語で 1 行ずつ。色ドットは
+    実際のルールの重要度 (critical=赤 / high=橙) に一致。
+    """
+    s = add_slide(prs, BG_LIGHT)
+    header(s, "付録: 同梱している検知ルール 13 本",
+           kicker="Q&A 用   — 攻撃の流れに沿って整理")
+
+    # 凡例 (重要度の色)
+    lg = s.shapes.add_shape(MSO_SHAPE.OVAL, Inches(9.05), Inches(0.55),
+                            Inches(0.16), Inches(0.16))
+    lg.fill.solid(); lg.fill.fore_color.rgb = CRIT
+    lg.line.fill.background(); lg.shadow.inherit = False
+    add_text(s, "critical (最重要)", x=9.28, y=0.5, w=1.7, h=0.3,
+             size=10, color=MUTED, anchor=MSO_ANCHOR.MIDDLE)
+    lg2 = s.shapes.add_shape(MSO_SHAPE.OVAL, Inches(11.1), Inches(0.55),
+                             Inches(0.16), Inches(0.16))
+    lg2.fill.solid(); lg2.fill.fore_color.rgb = HIGH
+    lg2.line.fill.background(); lg2.shadow.inherit = False
+    add_text(s, "high (重要)", x=11.33, y=0.5, w=1.4, h=0.3,
+             size=10, color=MUTED, anchor=MSO_ANCHOR.MIDDLE)
+
+    # 4 グループ (攻撃の段階) × それぞれのルール
+    groups = [
+        ("① 外から入る・動く・つながる", [
+            (CRIT, "既知のマルウェアそのものが実行された (MalwareBazaar 照合)"),
+            (CRIT, "指令サーバ (C2) として知られる場所への通信 (URLhaus 照合)"),
+            (CRIT, "正規ツール certutil を悪用して外部からファイルを取得"),
+            (CRIT, "悪用が知られた脆弱ドライバの読み込み (LOLDrivers 照合)"),
+        ]),
+        ("② 盗む・住み着く", [
+            (CRIT, "ログイン情報の抜き取り (LSASS のメモリダンプ)"),
+            (HIGH, "書き換え可能な場所のプログラムをサービス登録して常駐"),
+            (HIGH, "WMI で「出来事をきっかけに自動起動」を仕込む"),
+        ]),
+        ("③ 監視を無力化する", [
+            (HIGH, "PowerShell のウイルス検査 (AMSI) を無力化"),
+            (CRIT, "ログ記録サービスそのものを停止・無効化"),
+            (HIGH, "監査設定から記録項目を外して “見えなく” する"),
+        ]),
+        ("④ 証拠を消す", [
+            (HIGH, "wevtutil などでイベントログをまるごと消去"),
+            (CRIT, "監査を変えた直後にログ消去、という “合わせ技”"),
+            (CRIT, "復元用スナップショットの削除 (ランサムの前兆)"),
+        ]),
+    ]
+
+    card_w, card_h = 5.85, 2.45
+    positions = [(0.6, 1.95), (6.88, 1.95), (0.6, 4.5), (6.88, 4.5)]
+    for (title, rules), (cx, cy) in zip(groups, positions):
+        add_card(s, cx, cy, card_w, card_h, fill=PANEL, accent_left=ACCENT)
+        add_text(s, title, x=cx + 0.28, y=cy + 0.16, w=card_w - 0.45, h=0.45,
+                 size=14, color=ACCENT_DK, font=FONT_HEAD, bold=True)
+        ly = cy + 0.72
+        for color, desc in rules:
+            dot = s.shapes.add_shape(MSO_SHAPE.OVAL, Inches(cx + 0.3),
+                                     Inches(ly + 0.07), Inches(0.12), Inches(0.12))
+            dot.fill.solid(); dot.fill.fore_color.rgb = color
+            dot.line.fill.background(); dot.shadow.inherit = False
+            add_text(s, desc, x=cx + 0.54, y=ly, w=card_w - 0.78, h=0.4,
+                     size=10.5, color=TEXT, line_spacing=1.1)
+            ly += 0.42
+
+    add_text(s, "付録", x=12.0, y=7.05, w=1.0, h=0.3,
+             size=9, color=MUTED, align=PP_ALIGN.RIGHT)
+
+
 # ===========================================================================
 # 発表者ノート (各スライドで話す原稿) — PowerPoint の「ノート」欄に入る
 # ===========================================================================
@@ -1038,6 +1108,14 @@ SPEAKER_NOTES = {
         "成果物はすべて GitHub で公開しているので、お手元の Windows PC のログで"
         "ぜひ一度試してみてください。ご質問・フィードバックをお願いします。"
     ),
+    16: (
+        "(付録・Q&A 用) 「13 本って具体的には?」と聞かれたら、このスライドを"
+        "出してください。\n"
+        "本編では代表的な 4 種類を紹介しましたが、実際は攻撃の流れに沿って 13 本を"
+        "用意しています。「①外から入って動く → ②盗んで住み着く → ③監視を無力化 → "
+        "④証拠を消す」という順番で、それぞれの段階で出る特徴を捕まえます。\n"
+        "赤が critical、橙が high です。気になるルールがあれば個別に説明できます。"
+    ),
 }
 
 
@@ -1075,6 +1153,7 @@ def main():
     slide_demo(prs, 13, total)          # 13 — デモ
     slide_summary(prs, 14, total)       # 14 — まとめ
     slide_thanks(prs, total, total)     # 15 — おわり
+    slide_appendix_rules(prs, total)    # 付録 — 検知ルール 13 本の一覧 (Q&A 用)
 
     attach_notes(prs)                   # 各スライドに発表者ノートを付与
 
