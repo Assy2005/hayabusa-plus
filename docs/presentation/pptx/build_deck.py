@@ -77,6 +77,8 @@ FONT_BODY = "Calibri"
 FONT_MONO = "Consolas"
 
 IMG_DIR = Path(__file__).resolve().parents[2] / "images"   # docs/images
+DEMO_VIDEO = Path(__file__).resolve().parents[2] / "demo" / "hayabusa-plus-demo.mp4"
+DEMO_POSTER = IMG_DIR / "dashboard.png"                    # 動画のサムネ
 
 
 # ---------------------------------------------------------------------------
@@ -847,17 +849,40 @@ def slide_dev_anomaly(prs, n, total):
 
 
 def slide_demo(prs, n, total):
-    """11: デモ — フルブリードのセクション扉 (紺)."""
+    """13: デモ — 録画デモ動画を埋め込んだセクション扉 (紺).
+
+    動画ファイルがあればスライド中央に埋め込む (クリックで再生)。ライブ
+    デモがうまく動かないときの保険になる。無ければ従来のテキスト扉。
+    """
     s = add_slide(prs, NAVY)
-    add_text(s, "DEMO", x=0.6, y=1.9, w=12, h=1.6,
-             size=110, color=WHITE, font=FONT_HEAD, bold=True,
-             align=PP_ALIGN.CENTER)
-    add_text(s, "実際の画面で動かしてみます",
-             x=0.6, y=4.35, w=12, h=0.6, size=24, color=ICE,
-             italic=True, align=PP_ALIGN.CENTER)
-    add_text(s, "サンプルログを読み込み、調査の流れを見ていただきます。",
-             x=0.6, y=5.15, w=12, h=0.5, size=15, color=ICE,
-             align=PP_ALIGN.CENTER)
+
+    if DEMO_VIDEO.exists():
+        add_text(s, "DEMO", x=0.6, y=0.55, w=12, h=0.9,
+                 size=44, color=WHITE, font=FONT_HEAD, bold=True,
+                 align=PP_ALIGN.CENTER)
+        # 16:9 で中央に配置
+        vw, vh = 8.4, 4.725
+        vx = (13.333 - vw) / 2
+        vy = 1.55
+        poster = str(DEMO_POSTER) if DEMO_POSTER.exists() else None
+        movie = s.shapes.add_movie(
+            str(DEMO_VIDEO), Inches(vx), Inches(vy), Inches(vw), Inches(vh),
+            poster_frame_image=poster, mime_type="video/mp4")
+        movie.line.color.rgb = ICE
+        movie.line.width = Pt(1.0)
+        add_text(s, "▶ クリックで再生 — 実際の画面の録画 (約 38 秒・字幕つき)",
+                 x=0.6, y=6.5, w=12, h=0.5, size=15, color=ICE,
+                 italic=True, align=PP_ALIGN.CENTER)
+    else:
+        add_text(s, "DEMO", x=0.6, y=1.9, w=12, h=1.6,
+                 size=110, color=WHITE, font=FONT_HEAD, bold=True,
+                 align=PP_ALIGN.CENTER)
+        add_text(s, "実際の画面で動かしてみます",
+                 x=0.6, y=4.35, w=12, h=0.6, size=24, color=ICE,
+                 italic=True, align=PP_ALIGN.CENTER)
+        add_text(s, "サンプルログを読み込み、調査の流れを見ていただきます。",
+                 x=0.6, y=5.15, w=12, h=0.5, size=15, color=ICE,
+                 align=PP_ALIGN.CENTER)
     page_no(s, n, total, dark=True)
 
 
@@ -1094,7 +1119,9 @@ SPEAKER_NOTES = {
         "ここから実際の画面でお見せします。サンプルログを読み込んで、調査の流れを"
         "見ていただきます。\n"
         "(デモ: スキャン実行 → ダッシュボードで全体把握 → 検知の日本語解説 → "
-        "ホスト別の危険度ランキング、の順に見せる)"
+        "ホスト別の危険度ランキング、の順に見せる)\n"
+        "※ ライブが不調なときは、スライド中央の動画をクリックすれば同じ流れの"
+        "録画 (約 38 秒・字幕つき) が再生されます。"
     ),
     14: (
         "まとめます。エンジンに lookup という新しい文法を追加し、検知ルールを 13 本"
