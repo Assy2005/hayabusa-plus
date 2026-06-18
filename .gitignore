@@ -72,3 +72,7 @@ dist/
 docs/presentation/pptx/_qa/
 docs/presentation/pptx/_assets/
 ~$*.pptx
+
+# プレゼン一式は GitHub では管理しない (ローカルのみ)
+docs/presentation/
+docs/demo/
