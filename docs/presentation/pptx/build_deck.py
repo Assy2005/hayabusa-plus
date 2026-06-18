@@ -246,7 +246,7 @@ def slide_title(prs, total):
     lines = [
         "🦀 エンジン本体 (Rust) に新しい検知機能を追加",
         "📜 攻撃を見抜く検知ルールを 13 本自作",
-        "🖥️ 結果を読み解ける GUI をゼロから開発 (約 8,000 行)",
+        "🖥️ 結果を読み解ける GUI をゼロから開発",
     ]
     ly = 4.78
     for line in lines:
@@ -489,7 +489,7 @@ def slide_overview(prs, n, total):
              align=PP_ALIGN.CENTER)
     add_text(s, "調査用 GUI", x=8.3, y=flow_y + 0.78, w=3.0, h=0.4,
              size=14, color=ACCENT_DK, bold=True, align=PP_ALIGN.CENTER)
-    add_text(s, "ゼロから開発 (約 8,000 行)", x=8.3, y=flow_y + 1.2, w=3.0,
+    add_text(s, "ゼロから開発", x=8.3, y=flow_y + 1.2, w=3.0,
              h=0.35, size=11, color=MUTED, align=PP_ALIGN.CENTER)
 
     add_arrow_right(s, 11.45, flow_y + 0.75)
@@ -759,7 +759,7 @@ def slide_dev_gui(prs, n, total):
     """11: 開発③ GUI — 結果を「読める」にする画面をゼロから開発."""
     s = add_slide(prs, BG_LIGHT)
     header(s, "③  結果を「読める」にする GUI をゼロから開発",
-           kicker="開発内容 3 / 3   (Python + JavaScript 約 8,000 行)")
+           kicker="開発内容 3 / 3   (Python + JavaScript)")
 
     points = [
         ("🇯🇵", "日本語の解説付き",
@@ -894,7 +894,7 @@ def slide_summary(prs, n, total):
     stats = [
         ("新文法",   "lookup:", "エンジン本体 (Rust) を改造し\nリスト照合機能を追加", ACCENT_DK),
         ("13",      "本",      "攻撃を見抜く検知ルールを\n自作 (痕跡隠蔽の検知など)", HIGH),
-        ("約8,000", "行",      "結果を読み解く GUI を\nゼロから開発",               MED),
+        ("GUI",     "ゼロから開発", "結果を日本語で読み解く\n調査画面を自作",        MED),
         ("約8万",   "件",      "「悪いものリスト」を\n自動で取り込んで照合",          OK),
     ]
     card_w = 2.95
@@ -1016,6 +1016,66 @@ def slide_appendix_rules(prs, total):
              size=9, color=MUTED, align=PP_ALIGN.RIGHT)
 
 
+def slide_qa(prs, kicker, title, items):
+    """付録: 想定問答 (Q&A) を 1 枚に 3 問。質問されたら該当ページを出す用。
+
+    items = [(question, answer), ...] を縦に積む。本編 (1-15) の番号は崩さず、
+    フッタは「付録」とだけ表示する。
+    """
+    s = add_slide(prs, BG_LIGHT)
+    header(s, title, kicker=kicker)
+    y = 1.95
+    ch = (6.98 - y) / len(items) - 0.16
+    for q, a in items:
+        add_card(s, 0.6, y, 12.13, ch, fill=PANEL, accent_left=ACCENT)
+        add_text(s, "Q.  " + q, x=0.95, y=y + 0.16, w=11.5, h=0.5,
+                 size=15, color=TEXT, font=FONT_HEAD, bold=True)
+        add_text(s, "A.  " + a, x=0.95, y=y + 0.66, w=11.45, h=ch - 0.78,
+                 size=12.5, color=MUTED, line_spacing=1.32)
+        y += ch + 0.16
+    add_text(s, "付録", x=12.0, y=7.05, w=1.0, h=0.3,
+             size=9, color=MUTED, align=PP_ALIGN.RIGHT)
+
+
+# 想定問答の中身 (3 枚ぶん)
+QA_POSITION = [
+    ("既存の Hayabusa と何が違うの?",
+     "検知エンジンに lookup 文法を追加し、攻撃を見抜くルールを 13 本自作。さらに結果を"
+     "日本語で読み解く GUI、振る舞い分析、IoC の自動取り込みを足した。土台の検知力は"
+     "活かしつつ「専門家でなくても使える形」にしたのが差分。"),
+    ("SIEM や商用 EDR と何が違うの?",
+     "導入ゼロ・オフライン・無料で、PC 1 台に展開すればすぐ動く。大規模な常時監視では"
+     "なく「インシデント時に手元で素早く調べる」用途に振り切っている。"),
+    ("Sigma ルールはそのまま使える? 独自拡張で互換は壊れない?",
+     "世界共通の Sigma 約 5,000 本に加え、自作 13 本が使える。lookup は独自拡張だが、"
+     "上流の Hayabusa は知らない記法を無視するだけなので互換は壊れない。"),
+]
+
+QA_QUALITY = [
+    ("誤検知は多くならないの?",
+     "単一の特徴では鳴らさず複数条件の AND で判定。各ルールに誤検知例を明記し、ゴールデン"
+     "イメージの許可リストや、GUI 上での TP/FP 判定・抑制で運用しながら絞り込める。"),
+    ("速度や扱える規模は?",
+     "Rust 製で数万件を数十秒。lookup は起動時に 1 回だけリストを読み込み O(1) で照合する"
+     "ため、リストが増えても速度はほぼ一定（本デモでも 1.2 万件超を処理）。"),
+    ("IoC リストはどうやって最新に保つ?",
+     "feeds.yml に宣言し、ボタン 1 つで取得・正規化 (loldrivers / MalwareBazaar / URLhaus "
+     "/ Feodo)。取得失敗時は前回分を保持し、カバレッジを空にしない設計。"),
+]
+
+QA_SAFETY = [
+    ("データは外部に送られない? 安全?",
+     "localhost 限定バインドで外部送信なし、追加ソフトも不要。自 PC のライブ解析は管理者"
+     "権限＋明示チェック時のみ。DNS リバインドや CSRF への対策も実装済み。"),
+    ("未知の攻撃 (ゼロデイ) は検知できる?",
+     "ルールは既知の手口に強い。未知は振る舞い分析（急増・拡散・沈黙・時間外）で「いつもと"
+     "違う」を拾う、という二段構えでカバーする。"),
+    ("今後の発展は?",
+     "時間の流れを追った相関分析（「A の後に B が起きたら怪しい」）や、AI による検知ルールの"
+     "自動生成へ。"),
+]
+
+
 # ===========================================================================
 # 発表者ノート (各スライドで話す原稿) — PowerPoint の「ノート」欄に入る
 # ===========================================================================
@@ -1061,7 +1121,7 @@ SPEAKER_NOTES = {
         "全体像です。グレーが既存の Hayabusa、青が私が開発した部分です。\n"
         "ログがエンジンで解析され、GUI を通して人が読む、という流れ。エンジンには"
         "中身を改造して新機能を追加し、下から「自作の検知ルール 13 本」と「悪いもの"
-        "リスト約 8 万件」を注ぎ込んでいます。GUI はゼロから約 8,000 行で作りました。\n"
+        "リスト約 8 万件」を注ぎ込んでいます。GUI はゼロから自作しました。\n"
         "では順に説明します。"
     ),
     7: (
@@ -1125,7 +1185,7 @@ SPEAKER_NOTES = {
     ),
     14: (
         "まとめます。エンジンに lookup という新しい文法を追加し、検知ルールを 13 本"
-        "自作、結果を読み解く GUI を約 8,000 行で開発し、悪いものリスト約 8 万件を"
+        "自作、結果を読み解く GUI を新たに開発し、悪いものリスト約 8 万件を"
         "自動で取り込んで照合できるようにしました。\n"
         "今後は、時間の流れを追った相関分析 (「A の後に B が起きたら怪しい」) や、"
         "AI による検知ルールの自動生成に進めたいと考えています。"
@@ -1181,6 +1241,12 @@ def main():
     slide_summary(prs, 14, total)       # 14 — まとめ
     slide_thanks(prs, total, total)     # 15 — おわり
     slide_appendix_rules(prs, total)    # 付録 — 検知ルール 13 本の一覧 (Q&A 用)
+    slide_qa(prs, "付録 — 想定問答 (Q&A)",
+             "よくある質問 ①  立ち位置・差分", QA_POSITION)
+    slide_qa(prs, "付録 — 想定問答 (Q&A)",
+             "よくある質問 ②  精度・性能・運用", QA_QUALITY)
+    slide_qa(prs, "付録 — 想定問答 (Q&A)",
+             "よくある質問 ③  安全性・未知の攻撃・今後", QA_SAFETY)
 
     attach_notes(prs)                   # 各スライドに発表者ノートを付与
 
