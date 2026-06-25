@@ -2180,11 +2180,37 @@ console.log("[app] app.js v2026-05-21-c executing");
         const medal = x.rank === 1 ? "🥇" : x.rank === 2 ? "🥈" : x.rank === 3 ? "🥉" : x.rank;
         const src = x.is_named ? "" : ` <span class="name-src">(ログのPC名)</span>`;
         const w = Math.round(100 * (x.risk_score || 0) / maxScore);
-        return `<div class="rank-item" data-computer="${escapeHtml(x.computer || "")}">
-          <div class="rank-row${top}" role="button" tabindex="0" aria-expanded="false" title="クリックで危険の内訳を表示">
+
+        // --- 危険演出: critical/high を含む or 高スコアほど "感染" 度UP ---
+        const crit = x.critical_n || 0, high = x.high_n || 0, score = x.risk_score || 0;
+        let infect = 0;                         // 0=なし 1=軽 2=中 3=重
+        if (crit > 0 || score >= 60) infect = 3;
+        else if (high > 0 || score >= 35) infect = 2;
+        else if (score >= 15) infect = 1;
+        const champion = x.rank === 1 && infect > 0;   // 1位かつ危険なら主役演出
+        const cls = ["rank-row" + top];
+        if (infect) cls.push("infected", "infect-" + infect);
+        if (champion) cls.push("champion");
+
+        // 浮遊する 🦠 (重いほど数を増やす)。champion はさらに盛る。
+        const bugN = champion ? 6 : infect === 3 ? 4 : infect === 2 ? 2 : 0;
+        let bugs = "";
+        for (let i = 0; i < bugN; i++) {
+          const left = 6 + (i * 88 / Math.max(1, bugN - 1));   // 横位置を散らす
+          const delay = (i * 0.5).toFixed(2), dur = (3 + (i % 3)).toFixed(1);
+          const g = ["🦠", "☣️", "💀", "🐛"][i % 4];
+          bugs += `<span class="vbug" style="left:${left}%;animation-delay:${delay}s;animation-duration:${dur}s">${g}</span>`;
+        }
+        const badge = champion
+          ? `<span class="danger-badge">☣️ 最も危険なPC</span>`
+          : (infect === 3 ? `<span class="danger-badge sm">感染の疑い</span>` : "");
+
+        return `<div class="rank-item${champion ? " is-champion" : ""}" data-computer="${escapeHtml(x.computer || "")}">
+          <div class="${cls.join(" ")}" role="button" tabindex="0" aria-expanded="false" title="クリックで危険の内訳を表示">
+            ${bugs ? `<div class="vbug-layer" aria-hidden="true">${bugs}</div>` : ""}
             <div class="rank-no">${medal}</div>
             <div class="rank-main">
-              <div class="rank-name">${escapeHtml(x.name || "(不明)")}${src}</div>
+              <div class="rank-name">${escapeHtml(x.name || "(不明)")}${src}${badge}</div>
               <div class="rank-sev">
                 <span class="rank-chip c">critical ${x.critical_n || 0}</span>
                 <span class="rank-chip h">high ${x.high_n || 0}</span>
