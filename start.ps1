@@ -1,3 +1,8 @@
+param(
+    # -Public で 0.0.0.0 にバインドし、LAN 公開 (危険度ランキング) モードで起動する。
+    [switch]$Public
+)
+
 # Hayabusa GUI launcher.
 #
 # The server prefers port 8787 but falls back to a random one if it's
@@ -18,6 +23,12 @@ if (-not $py) { $py = Get-Command python3 -ErrorAction SilentlyContinue }
 if (-not $py) { throw "Python 3.x required on PATH." }
 
 $env:HAYABUSA_GUI_PORT = if ($env:HAYABUSA_GUI_PORT) { $env:HAYABUSA_GUI_PORT } else { '8787' }
+
+if ($Public) {
+    $env:HAYABUSA_GUI_HOST = '0.0.0.0'
+    Write-Host "==> 公開(LAN)モード: 0.0.0.0 で待ち受けます。信頼できる LAN でのみ使用してください。" -ForegroundColor Yellow
+    Write-Host "    Windows ファイアウォールでポート $($env:HAYABUSA_GUI_PORT) の受信許可が必要です。" -ForegroundColor Yellow
+}
 
 $workspace = Join-Path $here 'workspace'
 New-Item -ItemType Directory -Path $workspace -Force | Out-Null
