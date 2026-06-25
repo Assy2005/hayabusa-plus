@@ -729,6 +729,10 @@ class Store:
             "       SUM(CASE WHEN d.level='medium'   THEN 1 ELSE 0 END) AS medium_n, "
             "       SUM(CASE WHEN d.level='low'      THEN 1 ELSE 0 END) AS low_n, "
             "       SUM(CASE WHEN d.level='informational' THEN 1 ELSE 0 END) AS info_n, "
+            "       COUNT(DISTINCT CASE WHEN d.level='critical' THEN d.rule_id END) AS crit_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='high'     THEN d.rule_id END) AS high_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='medium'   THEN d.rule_id END) AS medium_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='low'      THEN d.rule_id END) AS low_rules, "
             "       SUM(CASE WHEN d.verdict='tp' THEN 1 ELSE 0 END) AS tp_n, "
             "       SUM(CASE WHEN d.verdict='fp' THEN 1 ELSE 0 END) AS fp_n, "
             "       COUNT(DISTINCT d.rule_id) AS rules_seen, "
@@ -806,6 +810,10 @@ class Store:
             "       SUM(CASE WHEN d.level='medium'   THEN 1 ELSE 0 END) AS medium_n, "
             "       SUM(CASE WHEN d.level='low'      THEN 1 ELSE 0 END) AS low_n, "
             "       SUM(CASE WHEN d.level='informational' THEN 1 ELSE 0 END) AS info_n, "
+            "       COUNT(DISTINCT CASE WHEN d.level='critical' THEN d.rule_id END) AS crit_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='high'     THEN d.rule_id END) AS high_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='medium'   THEN d.rule_id END) AS medium_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='low'      THEN d.rule_id END) AS low_rules, "
             "       SUM(CASE WHEN d.verdict='tp' THEN 1 ELSE 0 END) AS tp_n, "
             "       SUM(CASE WHEN d.verdict='fp' THEN 1 ELSE 0 END) AS fp_n, "
             "       COUNT(DISTINCT d.rule_id) AS rules_seen, "
@@ -835,27 +843,37 @@ class Store:
 
     @classmethod
     def _risk_score(cls, row: dict) -> float:
-        """Compute a normalised 0–100 risk score from per-host aggregates.
+        """0–100 "obvious compromise" score.
 
-        Weighted sum of severity counts, with three modifiers:
-          * `tp_factor`  — analyst-confirmed TPs are worth more, confirmed
-            FPs subtract. Hosts where the analyst has signed off as
-            "all FP" naturally drop near zero.
-          * `recency_factor` — last_seen within 7 days bumps the score
-            (active threat is worse than stale one).
-          * The total is log-compressed so a host with 1000 detections
-            isn't 1000× a host with 1; the visual range stays usable.
+        Driven by the number of DISTINCT high-severity rules/techniques seen —
+        NOT raw event volume. Rationale: medium-level rules are noisy and scale
+        with how much log you feed in, so a weighted *count* let a big, benign
+        log out-score a genuinely compromised host. Counting distinct rules
+        per severity and weighting critical/high heavily fixes that:
+
+          * critical  : +30 each  (a single critical ≈ clear compromise)
+          * high      : +12 each
+          * medium    :  +2 each, capped at 8 distinct rules (max +16)
+          * low       : +0.5 each, capped at 5 (max +2.5)
+
+        So a host with zero critical/high stays low (≤ ~19) no matter how many
+        medium events it produces, while a couple of critical techniques put it
+        near the top. Same TP/FP and recency modifiers as before; linearly
+        clipped to 100 (no log-compression — keeps the high end spread out).
         """
-        import math
-        raw = (
-              row.get("critical_n", 0) * cls.RISK_WEIGHTS["critical"]
-            + row.get("high_n", 0)     * cls.RISK_WEIGHTS["high"]
-            + row.get("medium_n", 0)   * cls.RISK_WEIGHTS["medium"]
-            + row.get("low_n", 0)      * cls.RISK_WEIGHTS["low"]
-            + row.get("info_n", 0)     * cls.RISK_WEIGHTS["informational"]
+        crit = row.get("crit_rules", 0) or 0
+        high = row.get("high_rules", 0) or 0
+        med = row.get("medium_rules", 0) or 0
+        low = row.get("low_rules", 0) or 0
+        points = (
+            crit * 30.0
+            + high * 12.0
+            + min(med, 8) * 2.0
+            + min(low, 5) * 0.5
         )
-        # TP/FP feedback adjustment. Symmetric: each confirmed TP doubles
-        # weight, each confirmed FP halves it. Bounded.
+
+        # TP/FP feedback adjustment. Symmetric: confirmed TPs raise, confirmed
+        # FPs lower. Bounded.
         tp = row.get("tp_n") or 0
         fp = row.get("fp_n") or 0
         tp_factor = 1.0 + min(tp * 0.05, 1.0) - min(fp * 0.05, 0.8)
@@ -865,7 +883,7 @@ class Store:
         recency_factor = 1.0
         last = row.get("last_seen")
         if last:
-            import time, datetime
+            import datetime
             try:
                 last_dt = cls._parse_iso(last)
                 if last_dt.tzinfo:
@@ -881,10 +899,8 @@ class Store:
             except (ValueError, TypeError):
                 pass
 
-        scaled = raw * tp_factor * recency_factor
-        # log-compress and clip to 0..100.
-        compressed = 20.0 * math.log10(1.0 + scaled)
-        return round(min(100.0, max(0.0, compressed)), 1)
+        score = points * tp_factor * recency_factor
+        return round(min(100.0, max(0.0, score)), 1)
 
     def host_detail(self, computer: str, include_suppressed: bool = False) -> dict:
         """Per-host drill-down: timeline, top rules, ATT&CK distribution.
@@ -908,6 +924,10 @@ class Store:
             "       SUM(CASE WHEN d.level='medium'   THEN 1 ELSE 0 END) AS medium_n, "
             "       SUM(CASE WHEN d.level='low'      THEN 1 ELSE 0 END) AS low_n, "
             "       SUM(CASE WHEN d.level='informational' THEN 1 ELSE 0 END) AS info_n, "
+            "       COUNT(DISTINCT CASE WHEN d.level='critical' THEN d.rule_id END) AS crit_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='high'     THEN d.rule_id END) AS high_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='medium'   THEN d.rule_id END) AS medium_rules, "
+            "       COUNT(DISTINCT CASE WHEN d.level='low'      THEN d.rule_id END) AS low_rules, "
             "       SUM(CASE WHEN d.verdict='tp' THEN 1 ELSE 0 END) AS tp_n, "
             "       SUM(CASE WHEN d.verdict='fp' THEN 1 ELSE 0 END) AS fp_n, "
             "       COUNT(DISTINCT d.rule_id) AS rules_seen, "

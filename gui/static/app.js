@@ -2206,7 +2206,7 @@ console.log("[app] app.js v2026-05-21-c executing");
           <div class="rd-head">このパソコンで見つかった“あやしい動き” 上位 ${rules.length} 件</div>
           ${ruleRows}
           ${chanLine}
-          <div class="rd-note">数字は同じルールに当てはまった回数です。緊急/高 ほど危険度スコアへの影響が大きくなります。</div>
+          <div class="rd-note">数字は当てはまった回数です（回数はスコアに影響しません）。スコアは <b>緊急/高 の“異なる手口の数”</b>で決まります。</div>
         </div>`;
       panel.dataset.loaded = "1";
     } catch (e) {
