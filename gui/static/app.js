@@ -569,8 +569,15 @@ console.log("[app] app.js v2026-05-21-c executing");
   // ニックネームはブラウザに記憶。値が "" でも「キーが存在する=入力済み」と扱い、
   // 2回目以降はモーダルを出さずにその名前でランキング更新する。
   const NICK_KEY = "hayabusa_nickname";
-  const storedNick = () => { try { return localStorage.getItem(NICK_KEY); } catch { return null; } };
-  const setStoredNick = (v) => { try { localStorage.setItem(NICK_KEY, v); } catch {} };
+  // localStorage が無音失敗する環境 (プライベートモード等) でも、セッション内は
+  // メモリに保持して二度と聞かれないようにする。
+  let _nick = null;
+  const storedNick = () => {
+    if (_nick !== null) return _nick;
+    try { _nick = localStorage.getItem(NICK_KEY); } catch { _nick = null; }
+    return _nick;
+  };
+  const setStoredNick = (v) => { _nick = v; try { localStorage.setItem(NICK_KEY, v); } catch {} };
   { const n = storedNick(); if (n != null && $("#nickname")) $("#nickname").value = n; }
 
   function buildScanParams() {
