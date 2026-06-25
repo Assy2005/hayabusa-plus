@@ -18,3 +18,10 @@ hayabusa*
 !LICENSE.txt
 .~*
 config/critical_systems.txt
+# hayabusa-plus: keep build/runtime assets that the broad *.txt / *.css rules
+# above would otherwise drop. RustEmbed embeds art/ and config/ at COMPILE
+# time, so a clone without these fails to build (#[folder="art/"] missing).
+!art/
+!art/*.txt
+!config/*.txt
+!config/html_report/*.css
