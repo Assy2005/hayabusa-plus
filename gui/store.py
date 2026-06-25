@@ -748,6 +748,65 @@ class Store:
         rows.sort(key=lambda r: r["risk_score"], reverse=True)
         return rows
 
+    def _latest_jobs_by_computer(self) -> dict[str, tuple[float, str]]:
+        """computer -> (started_at, job_id) for the most recent scan of each PC."""
+        latest: dict[str, tuple[float, str]] = {}
+        for row in self._conn().execute(
+            "SELECT d.computer AS computer, d.job_id AS job_id, "
+            "       j.started_at AS sa "
+            "FROM detections d JOIN jobs j ON j.id = d.job_id "
+            "GROUP BY d.computer, d.job_id"):
+            comp = row["computer"]
+            if comp is None:
+                continue
+            sa = row["sa"] or 0
+            cur = latest.get(comp)
+            if cur is None or sa >= cur[0]:
+                latest[comp] = (sa, row["job_id"])
+        return latest
+
+    def ranking_stats(self) -> dict:
+        """Aggregate "tournament status" for the public dashboard: how many PCs
+        are in, how dangerous overall, the current champion, and which dangerous
+        techniques showed up across the most machines. Reflects the same
+        latest-scan-per-PC view as the leaderboard."""
+        rows = self.ranking()
+        latest = self._latest_jobs_by_computer()
+        job_ids = [v[1] for v in latest.values()]
+
+        total_det = sum(int(r.get("total") or 0) for r in rows)
+        infected = sum(1 for r in rows if (r.get("critical_n") or 0) > 0)
+        high_plus = sum(1 for r in rows
+                        if (r.get("critical_n") or 0) > 0 or (r.get("high_n") or 0) > 0)
+        champ = rows[0] if rows else None
+
+        top_techniques: list[dict] = []
+        if job_ids:
+            ph = ",".join("?" for _ in job_ids)
+            sev = ("CASE d.level WHEN 'critical' THEN 4 WHEN 'high' THEN 3 "
+                   "WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END")
+            for r in self._conn().execute(
+                "SELECT d.rule_title AS title, d.level AS level, "
+                "       COUNT(DISTINCT d.computer) AS pcs, "
+                "       COUNT(DISTINCT d.job_id || ':' || d.line_no) AS n "
+                f"FROM detections d WHERE d.job_id IN ({ph}) "
+                "AND d.rule_title IS NOT NULL "
+                f"AND {sev} >= 2 "          # medium 以上の“危険な手口”のみ
+                "GROUP BY d.rule_id "
+                f"ORDER BY {sev} DESC, pcs DESC, n DESC LIMIT 6", job_ids):
+                top_techniques.append(dict(r))
+
+        return {
+            "entries": len(rows),
+            "named": sum(1 for r in rows if r.get("is_named")),
+            "total_detections": total_det,
+            "infected": infected,
+            "high_plus": high_plus,
+            "champion": ({"name": champ["name"],
+                          "score": champ["risk_score"]} if champ else None),
+            "top_techniques": top_techniques,
+        }
+
     def set_label(self, job_id: str, nickname: str) -> None:
         """Attach an uploader nickname/team name to a scan job (public mode)."""
         nn = (nickname or "").strip()[:40]
@@ -780,19 +839,7 @@ class Store:
         # 1. Pick the latest job per computer (by scan start time). A re-scan
         #    creates a new job_id; we keep only the newest so detections never
         #    pile up across runs.
-        latest: dict[str, tuple[float, str]] = {}  # computer -> (started_at, job_id)
-        for row in c.execute(
-            "SELECT d.computer AS computer, d.job_id AS job_id, "
-            "       j.started_at AS sa "
-            "FROM detections d JOIN jobs j ON j.id = d.job_id "
-            "GROUP BY d.computer, d.job_id"):
-            comp = row["computer"]
-            if comp is None:
-                continue
-            sa = row["sa"] or 0
-            cur = latest.get(comp)
-            if cur is None or sa >= cur[0]:
-                latest[comp] = (sa, row["job_id"])
+        latest = self._latest_jobs_by_computer()
         if not latest:
             return []
 

@@ -1072,6 +1072,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
+        if path == "/api/ranking/stats":
+            try:
+                self._send_json(STORE.ranking_stats())
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+            return
+
         if path == "/api/ranking":
             qs = parse_qs(u.query)
             inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")

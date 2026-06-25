@@ -60,6 +60,7 @@ console.log("[app] app.js v2026-05-21-c executing");
       // 入口はランキング。直リンク (#results 等) でローカル専用タブを開いた場合も振り替える。
       const cur = document.querySelector(".tab.active");
       if (!_hashTab || (cur && cur.classList.contains("local-only"))) switchTab("ranking");
+      loadRankingStats();   // スキャン画面の大会ダッシュボードを初期表示
     }
   }).catch(() => {});
 
@@ -734,7 +735,7 @@ console.log("[app] app.js v2026-05-21-c executing");
         finishUI();
         refreshJobs();
         // 公開(ランキング)モードでは、スキャンが終わるたびに順位を更新する。
-        if (document.body.classList.contains("public-mode")) loadRanking();
+        if (document.body.classList.contains("public-mode")) { loadRanking(); loadRankingStats(); }
       } else if (msg.type === "error") {
         const row = document.createElement("div");
         row.className = "row"; row.style.color = "var(--bad)";
@@ -2298,6 +2299,51 @@ console.log("[app] app.js v2026-05-21-c executing");
       });
   } }
   { const _rb = $("#ranking-refresh"); if (_rb) _rb.onclick = loadRanking; }
+
+  // -------- 公開モード: 大会の全体統計ダッシュボード --------
+  async function loadRankingStats() {
+    const host = $("#pub-stats");
+    if (!host || !document.body.classList.contains("public-mode")) return;
+    try {
+      const r = await fetch("/api/ranking/stats");
+      const d = await r.json();
+      if (d.error) return;
+      if (!d.entries) {
+        host.innerHTML = `<div class="ps-head">📊 大会の状況</div>
+          <div class="muted small" style="padding:6px 2px">まだ参戦PCがありません。最初の1台になろう！</div>`;
+        return;
+      }
+      const champ = d.champion
+        ? `<div class="ps-champ">👑 首位 <b>${escapeHtml(d.champion.name || "(不明)")}</b>
+             <span class="ps-champ-score">${(d.champion.score || 0).toFixed(1)}</span></div>`
+        : "";
+      const tiles = [
+        ["🖥️", d.entries, "参戦PC"],
+        ["🦠", d.infected, "感染の疑い"],
+        ["⚠️", d.high_plus, "高リスク"],
+        ["🔎", (d.total_detections || 0).toLocaleString(), "総検知"],
+      ].map(([ic, n, l]) =>
+        `<div class="ps-tile"><div class="ps-ic">${ic}</div>
+           <div class="ps-n">${n}</div><div class="ps-l">${l}</div></div>`).join("");
+      const tech = (d.top_techniques || []).map(t => {
+        const lv = (t.level || "").toLowerCase();
+        const ja = LEVEL_JA[lv] || t.level || "";
+        return `<div class="ps-tech">
+            <span class="lvl lvl-${escapeHtml(lv)}">${escapeHtml(ja)}</span>
+            <span class="ps-tech-title">${escapeHtml(t.title || "(名称不明)")}</span>
+            <span class="ps-tech-pcs">${t.pcs}台</span>
+          </div>`;
+      }).join("");
+      host.innerHTML = `<div class="ps-head">📊 大会の状況 <span class="muted small">(自動更新)</span></div>
+        ${champ}
+        <div class="ps-tiles">${tiles}</div>
+        ${tech ? `<div class="ps-tech-head">よく出た“危険な手口”</div>${tech}` : ""}`;
+    } catch (e) { /* 静かに無視 (ネットワーク瞬断など) */ }
+  }
+  // 公開モードでは定期的に更新して "ライブ感" を出す。
+  setInterval(() => {
+    if (document.body.classList.contains("public-mode")) loadRankingStats();
+  }, 10000);
 
   async function loadHosts() {
     const tb = $("#hosts-table tbody");
