@@ -707,6 +707,11 @@ body.public-mode .pub-tutorial, body.public-mode .pub-fixed { display: block !im
 }
 .pub-fixed .pf-title { font-weight: 700; font-size: 13px; color: var(--text); margin-bottom: 3px; }
 
+/* 「設定は固定」注記は公開モードでは冗長なので常に隠す */
+body.public-mode .pub-fixed { display: none !important; }
+/* スキャン中は大会ダッシュを隠して進捗 (live-card) を前面に */
+body.public-mode.scanning .pub-stats { display: none !important; }
+
 /* 公開モード: 大会の全体統計ダッシュボード */
 body.public-mode .pub-stats { display: block !important; }
 .pub-stats { margin-top: 12px; }

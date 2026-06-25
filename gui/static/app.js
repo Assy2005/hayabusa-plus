@@ -644,6 +644,8 @@ console.log("[app] app.js v2026-05-21-c executing");
 
   function bindLive(jobId) {
     liveJobId = jobId;
+    // スキャン中は公開モードの大会ダッシュを隠し、進捗を前面に出す。
+    document.body.classList.add("scanning");
     $("#live-card").hidden = false;
     $("#live-jobid").textContent = "#" + jobId;
     $("#live-feed").innerHTML = "";
@@ -698,6 +700,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     // スキャン終了時に進捗 UI を片付ける共通処理
     const finishUI = (statusText) => {
       clearInterval(tick);
+      document.body.classList.remove("scanning");   // 大会ダッシュを戻す
       cancelBtn.hidden = true;
       if (statusText) $("#progress-note").textContent = statusText;
       // 100% を一瞬見せてから片付ける (完了が伝わるように)。
