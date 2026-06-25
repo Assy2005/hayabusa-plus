@@ -720,5 +720,5 @@ body.public-mode .local-only { display: none !important; }
 .rank-score { text-align: center; min-width: 92px; }
 .rank-score .sv { font-size: 30px; font-weight: 800; color: var(--crit); line-height: 1; }
 .rank-score .sl { font-size: 11px; color: var(--muted); }
-.rank-bar { width: 160px; height: 10px; border-radius: 6px; background: var(--panel-3); overflow: hidden; }
+.rank-bar { width: 160px; height: 6px; margin-top: 9px; border-radius: 6px; background: var(--panel-3); overflow: hidden; }
 .rank-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--high), var(--crit)); }
