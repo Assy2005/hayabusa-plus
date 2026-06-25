@@ -722,7 +722,9 @@ console.log("[app] app.js v2026-05-21-c executing");
   }
 
   function appendDetection(ev, lineNo) {
-    const lvl = (ev.Level || "info").toLowerCase();
+    // Sanitise to letters only — Level feeds an innerHTML class/text below, so
+    // never trust it raw (defence-in-depth against crafted detection output).
+    const lvl = ((ev.Level || "info").toLowerCase().match(/[a-z]+/) || ["info"])[0];
     const row = document.createElement("div");
     row.className = "row clickable";
     row.dataset.jobId = liveJobId || "";

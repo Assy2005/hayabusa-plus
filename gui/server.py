@@ -75,6 +75,15 @@ _LOOPBACK = {"127.0.0.1", "localhost", "::1", ""}
 BIND_HOST = os.environ.get("HAYABUSA_GUI_HOST", "127.0.0.1").strip()
 NETWORK_MODE = BIND_HOST not in _LOOPBACK
 
+# --- Resource limits (matter most in no-auth network mode) -----------------
+# Request bodies are read fully into memory, so an unbounded Content-Length is
+# a trivial OOM DoS. Cap uploads generously (EVTX/zip) and everything else tight.
+MAX_UPLOAD_BYTES = 1024 * 1024 * 1024     # 1 GiB  (evtx / zip upload)
+MAX_JSON_BYTES = 4 * 1024 * 1024          # 4 MiB  (any other POST/DELETE body)
+# Each scan forks a hayabusa subprocess; cap concurrency so a flood of /api/scan
+# can't exhaust CPU/RAM on the host. Queued+running counted together.
+MAX_CONCURRENT_SCANS = 2
+
 # System-EVTX inspection root on Windows. We only attempt to read this when
 # the user explicitly asks via /api/system/* — never automatically.
 SYSTEM_EVTX_ROOT = Path("C:/Windows/System32/winevt/Logs")
@@ -757,6 +766,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_text(
                     "Forbidden: cross-origin POST/DELETE blocked.", 403)
                 return False
+
+            # --- 3. Network mode: only allow the two write endpoints the
+            #        public UI needs. Everything else (clear history, delete
+            #        jobs, add suppressions, TP/FP verdicts, refresh feeds,
+            #        system import) is an analyst/admin action that an
+            #        anonymous LAN visitor must not reach — both to prevent
+            #        data loss and to stop leaderboard tampering.
+            if NETWORK_MODE:
+                wpath = urlparse(self.path).path
+                if wpath not in ("/api/scan", "/api/upload"):
+                    self._send_text(
+                        "この操作は公開モードでは利用できません。", 403)
+                    return False
         return True
 
     # baseline security headers attached to every response. We intercept
@@ -1387,7 +1409,26 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         path = u.path
 
+        # Body-size gate: bodies are buffered fully in memory, so reject
+        # oversized requests up front (OOM DoS defence, esp. in network mode).
+        clen = int(self.headers.get("Content-Length", 0) or 0)
+        body_limit = MAX_UPLOAD_BYTES if path == "/api/upload" else MAX_JSON_BYTES
+        if clen > body_limit:
+            self._send_json(
+                {"error": f"リクエストが大きすぎます ({clen} > {body_limit} bytes)"}, 413)
+            return
+
         if path == "/api/scan":
+            # Cap concurrent scans so a flood of requests can't spawn unbounded
+            # hayabusa subprocesses and exhaust the host.
+            with JOBS_LOCK:
+                active = sum(1 for j in JOBS.values()
+                             if j.status in ("running", "queued"))
+            if active >= MAX_CONCURRENT_SCANS:
+                self._send_json(
+                    {"error": "スキャンが混み合っています。少し待ってから再実行してください。"},
+                    429)
+                return
             try:
                 params = self._read_json()
             except ValueError as exc:
