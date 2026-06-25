@@ -677,6 +677,8 @@ console.log("[app] app.js v2026-05-21-c executing");
         liveES.close(); liveES = null;
         finishUI();
         refreshJobs();
+        // 公開(ランキング)モードでは、スキャンが終わるたびに順位を更新する。
+        if (document.body.classList.contains("public-mode")) loadRanking();
       } else if (msg.type === "error") {
         const row = document.createElement("div");
         row.className = "row"; row.style.color = "var(--bad)";

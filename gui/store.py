@@ -764,9 +764,38 @@ class Store:
         for that computer), so renaming and re-uploading can't farm multiple
         ranking slots for the same machine.
 
+        Scored on the **most recent scan per computer only** — re-scanning the
+        same logs replaces that PC's score instead of accumulating, so the
+        leaderboard reflects the current state and can't be inflated by
+        repeated scans.
+
         Same severity-weighted risk score as the host view, plus a 1-based rank.
         """
-        where = " WHERE 1=1"
+        c = self._conn()
+
+        # 1. Pick the latest job per computer (by scan start time). A re-scan
+        #    creates a new job_id; we keep only the newest so detections never
+        #    pile up across runs.
+        latest: dict[str, tuple[float, str]] = {}  # computer -> (started_at, job_id)
+        for row in c.execute(
+            "SELECT d.computer AS computer, d.job_id AS job_id, "
+            "       j.started_at AS sa "
+            "FROM detections d JOIN jobs j ON j.id = d.job_id "
+            "GROUP BY d.computer, d.job_id"):
+            comp = row["computer"]
+            if comp is None:
+                continue
+            sa = row["sa"] or 0
+            cur = latest.get(comp)
+            if cur is None or sa >= cur[0]:
+                latest[comp] = (sa, row["job_id"])
+        if not latest:
+            return []
+
+        job_ids = [v[1] for v in latest.values()]
+        ph = ",".join("?" for _ in job_ids)
+        where = f" WHERE d.job_id IN ({ph})"
+        params: list = list(job_ids)
         if not include_suppressed:
             where += " AND s.id IS NULL"
         sql = (
@@ -784,14 +813,18 @@ class Store:
             "FROM detections d "
             f"{self._SUPP_JOIN}{where} "
             "GROUP BY d.computer ORDER BY total DESC")
-        rows = [dict(r) for r in self._conn().execute(sql)]
+        rows = [dict(r) for r in c.execute(sql, params)]
 
-        # Resolve the display nickname per computer: the most recently set
-        # label among all jobs that produced detections for that computer.
-        labels = self._latest_nickname_by_computer()
+        # 2. Display nickname = the label on that computer's latest job.
+        nick_by_job: dict[str, str] = {}
+        for row in c.execute(
+            "SELECT job_id, nickname FROM labels "
+            "WHERE nickname IS NOT NULL AND nickname <> ''"):
+            nick_by_job[row["job_id"]] = row["nickname"]
         for r in rows:
             comp = r.get("computer") or "(不明)"
-            nick = labels.get(comp)
+            jid = latest.get(comp, (0, None))[1]
+            nick = nick_by_job.get(jid)
             r["name"] = nick or comp or "(不明)"
             r["is_named"] = 1 if nick else 0
             r["risk_score"] = self._risk_score(r)
@@ -799,31 +832,6 @@ class Store:
         for i, r in enumerate(rows, start=1):
             r["rank"] = i
         return rows
-
-    def _latest_nickname_by_computer(self) -> dict[str, str]:
-        """Map each Computer name to the most recently assigned nickname.
-
-        A computer can be scanned by several jobs, each with its own (or no)
-        nickname. We pick the nickname from the job with the newest label so
-        the leaderboard shows the latest team name without ever splitting a
-        single PC into multiple rows.
-        """
-        sql = (
-            "SELECT d.computer AS computer, l.nickname AS nickname, "
-            "       l.created_at AS created_at "
-            "FROM labels l JOIN detections d ON d.job_id = l.job_id "
-            "WHERE l.nickname IS NOT NULL AND l.nickname <> '' "
-            "GROUP BY d.computer, l.job_id")
-        latest: dict[str, tuple[float, str]] = {}
-        for row in self._conn().execute(sql):
-            comp = row["computer"]
-            if comp is None:
-                continue
-            ca = row["created_at"] or 0
-            cur = latest.get(comp)
-            if cur is None or ca >= cur[0]:
-                latest[comp] = (ca, row["nickname"])
-        return {c: v[1] for c, v in latest.items()}
 
     @classmethod
     def _risk_score(cls, row: dict) -> float:
