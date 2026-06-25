@@ -1,0 +1,4 @@
+# シェルスクリプトは LF 固定 (Windows でチェックアウトしても Linux で動くように)
+*.sh text eol=lf
+# Windows バッチは CRLF 固定
+*.bat text eol=crlf

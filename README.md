@@ -227,6 +227,46 @@ python tools\fetch_feeds.py
 
 ブラウザが `http://127.0.0.1:8787` で開きます。「このパソコンを検査」を使うときは **管理者として起動した PowerShell** から実行してください。
 
+### 🐧 Linux / WSL で動かす
+
+```bash
+git clone https://github.com/Assy2005/hayabusa-plus.git
+cd hayabusa-plus
+
+# 1) フォーク版エンジン (lookup 拡張入り) を Linux 向けにビルド (Rust が必要)
+bash tools/build_engine_linux.sh          # → bin/hayabusa-fx を生成
+
+# 2) Sigma ルールが未取得なら取得し、もう一度ビルドスクリプトで custom を配置
+./bin/hayabusa-fx update-rules ./bin/rules
+bash tools/build_engine_linux.sh
+
+# 3) IoC フィード取得 (任意・約 8 万件)
+python3 tools/fetch_feeds.py
+
+# 4) 起動
+./start.sh
+```
+
+`http://127.0.0.1:8787` が立ち上がります。**EVTX をアップロードして解析**してください
+（`「このパソコンを検査」`＝ライブ解析は Windows 専用機能なので Linux では無効です）。
+
+### 🌐 ネットワークに公開する（研究室の共有機にする）
+
+研究室の PC で起動し、同じ LAN の誰でもブラウザからログを調べられるようにできます。
+
+```bash
+./start.sh --public               # 0.0.0.0 で待受 (LAN 公開)
+# PORT=8080 ./start.sh --public   # ポート変更
+# Windows でも:  $env:HAYABUSA_GUI_HOST="0.0.0.0"; .\start.ps1
+```
+
+起動時に共有用 URL（例 `http://192.168.x.x:8787`）が表示されるので、それを参加者に伝えるだけです。
+
+> ⚠️ **公開モードは認証がありません。** 同じ LAN の誰でもログのアップロード・スキャン・
+> **全削除**ができます。**信頼できる LAN 内でのみ**使い、インターネットには晒さないでください。
+> （DNS リバインド防御は公開モードで外れますが、別サイト経由の CSRF=POST/DELETE は同一
+> オリジンチェックで引き続きブロックします。ライブ解析も公開モードでは無効です。）
+
 ---
 
 ## 🔧 エンジン拡張: `lookup:`

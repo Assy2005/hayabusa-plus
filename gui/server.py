@@ -65,6 +65,15 @@ RULES_DIR_FOR_INDEX = BIN_DIR / "rules"
 CUSTOM_RULES_DIR = ROOT / "rules-custom"
 RULE_INDEX = _rule_index.RuleIndex(RULES_DIR_FOR_INDEX, CUSTOM_RULES_DIR)
 
+# --- Bind / network mode -----------------------------------------------------
+# Default is localhost-only (the safe single-user posture this tool was built
+# for). Set HAYABUSA_GUI_HOST=0.0.0.0 to expose it on the LAN — e.g. a lab PC
+# where anyone may investigate logs. Network mode has NO authentication, so it
+# is only appropriate on a trusted LAN. Live analysis is refused in this mode.
+_LOOPBACK = {"127.0.0.1", "localhost", "::1", ""}
+BIND_HOST = os.environ.get("HAYABUSA_GUI_HOST", "127.0.0.1").strip()
+NETWORK_MODE = BIND_HOST not in _LOOPBACK
+
 # System-EVTX inspection root on Windows. We only attempt to read this when
 # the user explicitly asks via /api/system/* — never automatically.
 SYSTEM_EVTX_ROOT = Path("C:/Windows/System32/winevt/Logs")
@@ -149,21 +158,29 @@ def _list_system_channels() -> list[dict]:
 
 
 def find_hayabusa() -> Path:
-    """Locate the hayabusa binary inside ./bin.
+    """Locate the hayabusa binary inside ./bin (cross-platform).
 
-    Prefers our forked build (`hayabusa-fx-*.exe`) over the upstream
-    release zip's binary because the fork ships the `lookup:` Sigma
-    extension and a few related modifiers. Falls back to any other
-    `hayabusa*.exe` when the fork isn't present.
+    Prefers our forked build (`hayabusa-fx*`) over the upstream release
+    binary because the fork ships the `lookup:` Sigma extension. On Windows
+    we look for `*.exe`; on Linux/macOS for the extension-less ELF/Mach-O
+    binary (built from engine/ with `cargo build --release`).
     """
-    all_candidates = sorted(BIN_DIR.glob("hayabusa*.exe")) + sorted(BIN_DIR.glob("hayabusa"))
-    if not all_candidates:
-        raise SystemExit(
-            f"Hayabusa binary not found in {BIN_DIR}. "
-            "Drop hayabusa-*.exe (Windows) or hayabusa (Linux/macOS) there."
-        )
-    fx = [c for c in all_candidates if "-fx-" in c.name]
-    return fx[0] if fx else all_candidates[0]
+    cands = [p for p in BIN_DIR.glob("hayabusa*") if p.is_file()]
+    if sys.platform == "win32":
+        cands = [p for p in cands if p.suffix.lower() == ".exe"]
+    else:
+        cands = [p for p in cands if p.suffix.lower() != ".exe"]
+    if not cands:
+        if sys.platform == "win32":
+            hint = "Drop hayabusa-fx-*.exe into bin/."
+        else:
+            hint = ("Build the Linux engine first: tools/build_engine_linux.sh "
+                    "(or `cd engine && cargo build --release`, then copy the "
+                    "binary to bin/hayabusa-fx).")
+        raise SystemExit(f"Hayabusa binary not found in {BIN_DIR}. {hint}")
+    cands.sort()
+    fx = [c for c in cands if "-fx" in c.name]
+    return fx[0] if fx else cands[0]
 
 
 HAYABUSA_BIN = find_hayabusa()
@@ -357,6 +374,15 @@ def build_hayabusa_argv(job: Job, params: dict) -> list[str]:
     elif target.get("type") == "directory":
         argv += ["-d", str(safe_workspace_path(target["path"]))]
     elif target.get("type") == "live" and params.get("allow_live"):
+        # Live analysis reads THIS host's own event logs. It only makes sense
+        # on a Windows machine the analyst is sitting at — never on a Linux
+        # server or a shared network instance.
+        if sys.platform != "win32":
+            raise ValueError("ライブ解析は Windows でのみ利用できます。"
+                             "EVTX ファイルをアップロードしてください。")
+        if NETWORK_MODE:
+            raise ValueError("ネットワーク公開モードではライブ解析は無効です。"
+                             "EVTX ファイルをアップロードしてください。")
         argv += ["-l"]
     else:
         raise ValueError("Unknown or unauthorized target type")
@@ -684,12 +710,18 @@ class Handler(BaseHTTPRequestHandler):
     def _security_preflight(self) -> bool:
         """Return True if the request passes all gates; otherwise the
         handler has already responded with an appropriate 4xx and the
-        caller must return early."""
-        # --- 1. Host header check (DNS rebinding) ---
+        caller must return early.
+
+        Localhost mode keeps the strict DNS-rebinding defence (Host must be
+        loopback). Network mode (HAYABUSA_GUI_HOST=0.0.0.0) is for a trusted
+        LAN with no auth, so any Host is accepted — but we still enforce a
+        *same-origin* check on POST/DELETE, which blocks classic cross-site
+        CSRF from another website for free."""
         host_hdr = (self.headers.get("Host") or "").strip()
-        # Strip the port for comparison; the bind port is fluid in tests.
         host_only = host_hdr.rsplit(":", 1)[0].lower() if host_hdr else ""
-        if host_only not in self.ALLOWED_HOSTS:
+
+        # --- 1. Host header check (DNS rebinding) — localhost mode only ---
+        if not NETWORK_MODE and host_only not in self.ALLOWED_HOSTS:
             self._send_text(
                 f"Bad Host header (DNS rebinding defence): {host_hdr!r}", 421)
             return False
@@ -698,18 +730,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.command in ("POST", "DELETE"):
             origin = (self.headers.get("Origin") or "").strip()
             referer = (self.headers.get("Referer") or "").strip()
-            allowed_scheme_host = {"http://" + h for h in self.ALLOWED_HOSTS}
+            from urllib.parse import urlparse
             def _origin_ok(value: str) -> bool:
                 if not value:
                     return False
-                from urllib.parse import urlparse
-                u = urlparse(value)
-                host = (u.hostname or "").lower()
-                return host in self.ALLOWED_HOSTS
+                host = (urlparse(value).hostname or "").lower()
+                if host in self.ALLOWED_HOSTS:
+                    return True
+                # Network mode: accept same-origin (Origin host == Host host).
+                return NETWORK_MODE and host == host_only
             if not (_origin_ok(origin) or _origin_ok(referer)):
                 self._send_text(
-                    "Forbidden: cross-origin POST/DELETE blocked. "
-                    "Set Origin or Referer to a localhost URL.", 403)
+                    "Forbidden: cross-origin POST/DELETE blocked.", 403)
                 return False
         return True
 
@@ -1681,13 +1713,13 @@ def pick_port(preferred: int) -> tuple[int, bool]:
     """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        s.bind(("127.0.0.1", preferred))
+        s.bind((BIND_HOST, preferred))
         s.close()
         return preferred, False
     except OSError:
         s.close()
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.bind(("127.0.0.1", 0))
+        s.bind((BIND_HOST, 0))
         port = s.getsockname()[1]
         s.close()
         return port, True
@@ -1734,11 +1766,24 @@ def boot_reindex():
 PORT_FILE = WORKSPACE / ".port"
 
 
+def _primary_lan_ip() -> str:
+    """Best-effort: the IP other machines on the LAN would use to reach us.
+    Uses a UDP socket's routing decision (no packets are actually sent)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        return BIND_HOST
+
+
 def main():
     boot_reindex()
     preferred = int(os.environ.get("HAYABUSA_GUI_PORT", "8787"))
     port, fell_back = pick_port(preferred)
-    host = "127.0.0.1"
+    host = BIND_HOST
 
     print(f"\n  Hayabusa GUI")
     print(f"  Binary : {HAYABUSA_BIN}")
@@ -1760,7 +1805,15 @@ def main():
         print(f"  [WARN] the correct URL automatically. If you started the browser")
         print(f"  [WARN] manually, use the URL below - not http://127.0.0.1:{preferred}/.\n")
 
-    url = f"http://{host}:{port}"
+    if NETWORK_MODE:
+        disp = _primary_lan_ip()
+        url = f"http://{disp}:{port}"
+        print(f"  Bind   : {host}:{port}  (all interfaces)")
+        print(f"  Access : {url}   ← この URL を LAN の他 PC に共有")
+        print(f"  [WARN] 公開モード: 認証なし。誰でもアップロード/スキャン/削除が可能です。")
+        print(f"  [WARN] 信頼できる LAN 内でのみ使用してください (インターネットに晒さない)。")
+    else:
+        url = f"http://{host}:{port}"
     print(f"  Listen : {url}\n", flush=True)
 
     # Write the port file so start.ps1 / external tooling can open the
