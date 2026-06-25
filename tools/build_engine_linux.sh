@@ -32,6 +32,19 @@ mkdir -p bin
 cp -f "$BIN" bin/hayabusa-fx
 chmod +x bin/hayabusa-fx
 echo "[build] OK -> bin/hayabusa-fx"
+
+# --- config/ をバイナリの隣に配置 ---
+# Hayabusa は実行ファイルの隣の config/ を読む (default_profile_name.txt,
+# profiles.yaml, level_color.txt 等)。無いと埋め込みフォールバックで unwrap し
+# panic するため、必ず同梱する。
+if [ -d engine/config ]; then
+  rm -rf bin/config
+  cp -rf engine/config bin/config
+  echo "[build] config -> bin/config/"
+else
+  echo "[build] 警告: engine/config が見つかりません。config を同梱できませんでした。" >&2
+fi
+
 ./bin/hayabusa-fx --version 2>/dev/null || true
 
 # --- Sigma ルール + カスタムルールの配置 ---

@@ -23,6 +23,13 @@ console.log("[app] app.js v2026-05-21-c executing");
   // Switch to a tab by its data-tab name. Centralised so home-screen
   // shortcut cards and in-app pivots can reuse it.
   function switchTab(name) {
+    // 公開(危険度ランキング)モードでは、ローカル専用タブ (結果/全体ビュー/さがす/
+    // パソコン別) への遷移をすべてランキングへ振り替える。ナビは非表示でも、
+    // ホームのカードや検知詳細リンク経由で抜け道になるのを防ぐ。
+    if (document.body.classList.contains("public-mode")) {
+      const t = document.querySelector('.tab[data-tab="' + name + '"]');
+      if (t && t.classList.contains("local-only")) name = "ranking";
+    }
     $$(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
     const id = "tab-" + name;
     $$(".tab-panel").forEach(p => p.classList.toggle("active", p.id === id));
@@ -50,7 +57,9 @@ console.log("[app] app.js v2026-05-21-c executing");
   fetch("/api/config").then(r => r.json()).then(cfg => {
     if (cfg && cfg.network_mode) {
       document.body.classList.add("public-mode");
-      if (!_hashTab) switchTab("ranking");
+      // 入口はランキング。直リンク (#results 等) でローカル専用タブを開いた場合も振り替える。
+      const cur = document.querySelector(".tab.active");
+      if (!_hashTab || (cur && cur.classList.contains("local-only"))) switchTab("ranking");
     }
   }).catch(() => {});
 
