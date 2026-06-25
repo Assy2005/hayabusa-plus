@@ -254,11 +254,25 @@ python3 tools/fetch_feeds.py
 
 研究室の PC で起動し、同じ LAN の誰でもブラウザからログを調べられるようにできます。
 
+**Windows (推奨):**
+
+```powershell
+# 1) 受信ポートを開放 (最初の1回・管理者 PowerShell)
+New-NetFirewallRule -DisplayName "hayabusa-plus 8787" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8787
+
+# 2) 公開モードで起動 (通常の PowerShell)
+.\start.ps1 -Public
+```
+
+**Linux / WSL:**
+
 ```bash
 ./start.sh --public               # 0.0.0.0 で待受 (LAN 公開)
 # PORT=8080 ./start.sh --public   # ポート変更
-# Windows でも:  $env:HAYABUSA_GUI_HOST="0.0.0.0"; .\start.ps1
 ```
+
+> WSL2 は NAT のため、別 PC から繋ぐには Windows 側でポート転送が必要です
+> (`netsh interface portproxy ...`)。**LAN 公開は Windows ネイティブ実行を推奨**します。
 
 起動時に共有用 URL（例 `http://192.168.x.x:8787`）が表示されるので、それを参加者に伝えるだけです。
 
