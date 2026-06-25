@@ -118,6 +118,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_supp_key
   ON suppressions(scope,
                   IFNULL(rule_id, ''),
                   IFNULL(computer_like, ''));
+
+-- Optional uploader-supplied label for a scan job. Used by the public
+-- "danger ranking" mode so a leaderboard can group by team/nickname
+-- instead of the (often generic) Computer name baked into the EVTX.
+CREATE TABLE IF NOT EXISTS labels (
+  job_id     TEXT PRIMARY KEY,
+  nickname   TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
 """
 
 
@@ -733,6 +742,53 @@ class Store:
             r["risk_score"] = self._risk_score(r)
         # Sort by risk descending so the riskiest host bubbles to the top.
         rows.sort(key=lambda r: r["risk_score"], reverse=True)
+        return rows
+
+    def set_label(self, job_id: str, nickname: str) -> None:
+        """Attach an uploader nickname/team name to a scan job (public mode)."""
+        nn = (nickname or "").strip()[:40]
+        if not nn:
+            return
+        conn = self._conn()
+        conn.execute(
+            "INSERT INTO labels(job_id, nickname, created_at) VALUES(?,?,?) "
+            "ON CONFLICT(job_id) DO UPDATE SET nickname = excluded.nickname",
+            (job_id, nn, time.time()))
+        conn.commit()
+
+    def ranking(self, include_suppressed: bool = False) -> list[dict]:
+        """Leaderboard for the public 'danger ranking' mode.
+
+        Groups detections by the uploader's nickname when present, else by
+        the Computer name in the logs. Same severity-weighted risk score as
+        the host view, plus a 1-based rank.
+        """
+        where = " WHERE 1=1"
+        if not include_suppressed:
+            where += " AND s.id IS NULL"
+        sql = (
+            "SELECT COALESCE(NULLIF(l.nickname, ''), d.computer, '(不明)') AS name, "
+            "       MAX(CASE WHEN l.nickname IS NOT NULL THEN 1 ELSE 0 END) AS is_named, "
+            "       COUNT(DISTINCT d.job_id || ':' || d.line_no) AS total, "
+            "       SUM(CASE WHEN d.level='critical' THEN 1 ELSE 0 END) AS critical_n, "
+            "       SUM(CASE WHEN d.level='high'     THEN 1 ELSE 0 END) AS high_n, "
+            "       SUM(CASE WHEN d.level='medium'   THEN 1 ELSE 0 END) AS medium_n, "
+            "       SUM(CASE WHEN d.level='low'      THEN 1 ELSE 0 END) AS low_n, "
+            "       SUM(CASE WHEN d.level='informational' THEN 1 ELSE 0 END) AS info_n, "
+            "       SUM(CASE WHEN d.verdict='tp' THEN 1 ELSE 0 END) AS tp_n, "
+            "       SUM(CASE WHEN d.verdict='fp' THEN 1 ELSE 0 END) AS fp_n, "
+            "       COUNT(DISTINCT d.rule_id) AS rules_seen, "
+            "       MIN(d.ts) AS first_seen, MAX(d.ts) AS last_seen "
+            "FROM detections d "
+            "LEFT JOIN labels l ON l.job_id = d.job_id"
+            f"{self._SUPP_JOIN}{where} "
+            "GROUP BY name ORDER BY total DESC")
+        rows = [dict(r) for r in self._conn().execute(sql)]
+        for r in rows:
+            r["risk_score"] = self._risk_score(r)
+        rows.sort(key=lambda r: r["risk_score"], reverse=True)
+        for i, r in enumerate(rows, start=1):
+            r["rank"] = i
         return rows
 
     @classmethod

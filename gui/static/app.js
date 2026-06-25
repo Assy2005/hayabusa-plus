@@ -35,6 +35,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (name === "dashboard") loadDashboard();
     if (name === "hunt") initHunt();
     if (name === "hosts") loadHosts();
+    if (name === "ranking") loadRanking();
   }
   $$(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
 
@@ -43,6 +44,15 @@ console.log("[app] app.js v2026-05-21-c executing");
   if (_hashTab && document.getElementById("tab-" + _hashTab)) {
     switchTab(_hashTab);
   }
+
+  // 公開(危険度ランキング)モードの判定。サーバが 0.0.0.0 で待受しているとき
+  // network_mode=true。ローカル専用機能を隠し、ランキングを入口にする。
+  fetch("/api/config").then(r => r.json()).then(cfg => {
+    if (cfg && cfg.network_mode) {
+      document.body.classList.add("public-mode");
+      if (!_hashTab) switchTab("ranking");
+    }
+  }).catch(() => {});
 
   // ホーム画面の 3 ステップカード → 該当タブへ
   $$(".home-step").forEach(step => {
@@ -538,6 +548,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     const targetType = $("#target-type").value;
     const params = {
       target: { type: targetType, path: $("#target-path").value.trim() },
+      nickname: ($("#nickname")?.value || "").trim(),
       allow_live: $("#allow-live").checked,
       min_level: $("#min-level").value,
       eid_filter: $("#eid-filter").checked,
@@ -2073,6 +2084,54 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (score >= 10) return {label: "low",       cls: "risk-low"};
     return {label: "info", cls: "risk-info"};
   }
+
+  async function loadRanking() {
+    const host = $("#ranking-list");
+    if (!host) return;
+    host.innerHTML = `<div class="muted small">読込中…</div>`;
+    try {
+      const r = await fetch("/api/ranking");
+      const d = await r.json();
+      if (d.error) { host.innerHTML = `<div class="muted small">エラー: ${escapeHtml(d.error)}</div>`; return; }
+      const rows = d.ranking || [];
+      const cnt = $("#ranking-count");
+      if (cnt) cnt.textContent = rows.length ? `(${rows.length} エントリー)` : "";
+      if (!rows.length) {
+        host.innerHTML = `<div class="empty-state">
+          <div class="icon">🏆</div>
+          <div class="title">まだエントリーがありません</div>
+          ログをアップロードしてスキャンすると、危険度スコアでここに並びます。
+          <div class="cta"><button class="primary" data-goto-tab="scan">🔍 ログをアップロード</button></div>
+        </div>`;
+        return;
+      }
+      const maxScore = Math.max(...rows.map(x => x.risk_score || 0), 1);
+      host.innerHTML = rows.map(x => {
+        const top = x.rank <= 3 ? ` top${x.rank}` : "";
+        const medal = x.rank === 1 ? "🥇" : x.rank === 2 ? "🥈" : x.rank === 3 ? "🥉" : x.rank;
+        const src = x.is_named ? "" : ` <span class="name-src">(ログのPC名)</span>`;
+        const w = Math.round(100 * (x.risk_score || 0) / maxScore);
+        return `<div class="rank-row${top}">
+          <div class="rank-no">${medal}</div>
+          <div class="rank-main">
+            <div class="rank-name">${escapeHtml(x.name || "(不明)")}${src}</div>
+            <div class="rank-sev">
+              <span class="rank-chip c">critical ${x.critical_n || 0}</span>
+              <span class="rank-chip h">high ${x.high_n || 0}</span>
+              <span class="rank-chip m">medium ${x.medium_n || 0}</span>
+              <span class="rank-chip l">low ${x.low_n || 0}</span>
+              <span class="rank-chip muted">検知 ${(x.total || 0).toLocaleString()} ・ ルール ${x.rules_seen || 0}種</span>
+            </div>
+            <div class="rank-bar"><i style="width:${w}%"></i></div>
+          </div>
+          <div class="rank-score"><div class="sv">${(x.risk_score || 0).toFixed(1)}</div><div class="sl">危険度</div></div>
+        </div>`;
+      }).join("");
+    } catch (e) {
+      host.innerHTML = `<div class="muted small">取得に失敗しました: ${escapeHtml(String(e))}</div>`;
+    }
+  }
+  { const _rb = $("#ranking-refresh"); if (_rb) _rb.onclick = loadRanking; }
 
   async function loadHosts() {
     const tb = $("#hosts-table tbody");

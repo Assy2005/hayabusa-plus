@@ -1002,6 +1002,27 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/config":
+            # Lightweight flags the SPA reads on load to adapt its UI.
+            self._send_json({
+                "network_mode": NETWORK_MODE,   # published "danger ranking" site
+                "platform": sys.platform,
+                "live_supported": (sys.platform == "win32" and not NETWORK_MODE),
+            })
+            return
+
+        if path == "/api/ranking":
+            qs = parse_qs(u.query)
+            inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
+            try:
+                rows = STORE.ranking(include_suppressed=inc)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json({"ranking": rows, "total": len(rows),
+                             "risk_weights": STORE.RISK_WEIGHTS})
+            return
+
         if path == "/api/hosts":
             qs = parse_qs(u.query)
             inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
@@ -1342,6 +1363,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             job = Job("scan", [])
             register_job(job)
+            # Public-mode leaderboard label (team / nickname), optional.
+            try:
+                STORE.set_label(job.id, params.get("nickname") or "")
+            except Exception:  # noqa: BLE001
+                pass
             threading.Thread(target=run_job, args=(job, params), daemon=True).start()
             self._send_json({"job_id": job.id}, 202)
             return

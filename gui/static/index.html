@@ -18,6 +18,7 @@
       <button data-tab="dashboard" class="tab">📊 全体ビュー</button>
       <button data-tab="results" class="tab">📋 結果</button>
       <button data-tab="hunt" class="tab">🔎 さがす</button>
+      <button data-tab="ranking" class="tab">🏆 危険度ランキング</button>
       <button data-tab="hosts" class="tab">💻 パソコン別</button>
       <button data-tab="rules" class="tab">📖 検出ルール</button>
       <button data-tab="about" class="tab">ℹ️ 情報</button>
@@ -86,8 +87,8 @@
             <h2>対象を選ぶ</h2>
           </div>
 
-          <!-- このパソコンを直接スキャン -->
-          <div id="this-pc-card" class="this-pc">
+          <!-- このパソコンを直接スキャン (公開モードでは非表示) -->
+          <div id="this-pc-card" class="this-pc local-only">
             <div class="this-pc-head">
               <span class="this-pc-icon">🖥️</span>
               <div class="this-pc-title">このパソコンを検査</div>
@@ -245,6 +246,11 @@
           <div class="muted small">選択中:</div>
           <div id="selection-label" class="selection-empty">まだ選択されていません</div>
           <input id="target-path" type="hidden" />
+        </div>
+        <div class="nickname-field public-only">
+          <label for="nickname" class="muted small">チーム名 / ニックネーム</label>
+          <input id="nickname" type="text" maxlength="40"
+                 placeholder="例: あぶないPC選手権 No.1" autocomplete="off" />
         </div>
         <button id="scan-btn" class="primary scan-go" disabled>
           <span class="scan-go-main">スキャン開始</span>
@@ -641,6 +647,24 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- 危険度ランキング (公開モードのメイン) -->
+    <section id="tab-ranking" class="tab-panel">
+      <div class="tab-intro">
+        <span class="ti-icon">🏆</span>
+        <span class="ti-text"><strong>アップロードされたログを「危険度スコア」でランキング。</strong>
+          どれだけ“危ない”ログを作れるか競えます。スキャン時にチーム名を入れると、その名前で並びます。</span>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>危険度ランキング <span class="muted small" id="ranking-count"></span></h2>
+          <button id="ranking-refresh" class="ghost-btn small">↻ 更新</button>
+        </div>
+        <p class="muted small">スコア = 重大度の重み付き合計を 0–100 に圧縮
+          (critical ×10 / high ×5 / medium ×2 / low ×1)。高いほど“危険”。</p>
+        <div id="ranking-list" class="ranking-list"></div>
       </div>
     </section>
 
