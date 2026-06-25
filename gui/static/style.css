@@ -722,3 +722,26 @@ body.public-mode .local-only { display: none !important; }
 .rank-score .sl { font-size: 11px; color: var(--muted); }
 .rank-bar { width: 160px; height: 6px; margin-top: 9px; border-radius: 6px; background: var(--panel-3); overflow: hidden; }
 .rank-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--high), var(--crit)); }
+
+/* clickable ranking entry + expandable "what danger" panel */
+.rank-item { margin-bottom: 10px; }
+.rank-row { cursor: pointer; transition: box-shadow .12s, transform .12s; }
+.rank-row:hover { box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+.rank-row:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.rank-caret { width: 22px; text-align: center; color: var(--muted-2); font-size: 14px;
+  transition: transform .15s; flex: 0 0 auto; }
+.rank-row[aria-expanded="true"] .rank-caret { transform: rotate(180deg); }
+.rank-detail { border: 1px solid var(--line); border-top: none;
+  border-radius: 0 0 10px 10px; background: var(--panel-2, var(--panel));
+  margin: -6px 8px 0; }
+.rank-detail-inner { padding: 12px 16px; }
+.rd-head { font-weight: 700; font-size: 13px; color: var(--text); margin-bottom: 8px; }
+.rd-rule { display: flex; align-items: center; gap: 10px; padding: 5px 0;
+  border-top: 1px dashed var(--line); }
+.rd-rule:first-of-type { border-top: none; }
+.rd-rule .lvl { flex: 0 0 auto; min-width: 40px; text-align: center; }
+.rd-title { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-count { flex: 0 0 auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rd-chans { margin-top: 9px; font-size: 12px; color: var(--muted-2); }
+.rd-note { margin-top: 9px; font-size: 11px; color: var(--muted-2); }

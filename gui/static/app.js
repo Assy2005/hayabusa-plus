@@ -2120,26 +2120,97 @@ console.log("[app] app.js v2026-05-21-c executing");
         const medal = x.rank === 1 ? "🥇" : x.rank === 2 ? "🥈" : x.rank === 3 ? "🥉" : x.rank;
         const src = x.is_named ? "" : ` <span class="name-src">(ログのPC名)</span>`;
         const w = Math.round(100 * (x.risk_score || 0) / maxScore);
-        return `<div class="rank-row${top}">
-          <div class="rank-no">${medal}</div>
-          <div class="rank-main">
-            <div class="rank-name">${escapeHtml(x.name || "(不明)")}${src}</div>
-            <div class="rank-sev">
-              <span class="rank-chip c">critical ${x.critical_n || 0}</span>
-              <span class="rank-chip h">high ${x.high_n || 0}</span>
-              <span class="rank-chip m">medium ${x.medium_n || 0}</span>
-              <span class="rank-chip l">low ${x.low_n || 0}</span>
-              <span class="rank-chip muted">検知 ${(x.total || 0).toLocaleString()} ・ ルール ${x.rules_seen || 0}種</span>
+        return `<div class="rank-item" data-computer="${escapeHtml(x.computer || "")}">
+          <div class="rank-row${top}" role="button" tabindex="0" aria-expanded="false" title="クリックで危険の内訳を表示">
+            <div class="rank-no">${medal}</div>
+            <div class="rank-main">
+              <div class="rank-name">${escapeHtml(x.name || "(不明)")}${src}</div>
+              <div class="rank-sev">
+                <span class="rank-chip c">critical ${x.critical_n || 0}</span>
+                <span class="rank-chip h">high ${x.high_n || 0}</span>
+                <span class="rank-chip m">medium ${x.medium_n || 0}</span>
+                <span class="rank-chip l">low ${x.low_n || 0}</span>
+                <span class="rank-chip muted">検知 ${(x.total || 0).toLocaleString()} ・ ルール ${x.rules_seen || 0}種</span>
+              </div>
+              <div class="rank-bar"><i style="width:${w}%"></i></div>
             </div>
-            <div class="rank-bar"><i style="width:${w}%"></i></div>
+            <div class="rank-score"><div class="sv">${(x.risk_score || 0).toFixed(1)}</div><div class="sl">危険度</div></div>
+            <div class="rank-caret">▾</div>
           </div>
-          <div class="rank-score"><div class="sv">${(x.risk_score || 0).toFixed(1)}</div><div class="sl">危険度</div></div>
+          <div class="rank-detail" hidden></div>
         </div>`;
       }).join("");
     } catch (e) {
       host.innerHTML = `<div class="muted small">取得に失敗しました: ${escapeHtml(String(e))}</div>`;
     }
   }
+
+  const LEVEL_JA = { critical: "緊急", high: "高", medium: "中", low: "低", informational: "情報" };
+
+  // 行をクリック → そのPCの「危険の内訳」(検知ルール上位) を遅延ロードして展開。
+  async function toggleRankingDetail(item) {
+    const row = item.querySelector(".rank-row");
+    const panel = item.querySelector(".rank-detail");
+    if (!panel) return;
+    const open = !panel.hidden;
+    if (open) {
+      panel.hidden = true;
+      row.setAttribute("aria-expanded", "false");
+      return;
+    }
+    row.setAttribute("aria-expanded", "true");
+    panel.hidden = false;
+    if (panel.dataset.loaded === "1") return;   // 既に取得済み
+    panel.innerHTML = `<div class="muted small" style="padding:10px 14px">読込中…</div>`;
+    const comp = item.dataset.computer || "";
+    try {
+      const r = await fetch(`/api/hosts/${encodeURIComponent(comp)}`);
+      const d = await r.json();
+      if (d.error) { panel.innerHTML = `<div class="muted small" style="padding:10px 14px">取得に失敗: ${escapeHtml(d.error)}</div>`; return; }
+      const rules = d.top_rules || [];
+      const chans = d.top_channels || [];
+      if (!rules.length) {
+        panel.innerHTML = `<div class="muted small" style="padding:10px 14px">表示できる検知がありません。</div>`;
+        panel.dataset.loaded = "1";
+        return;
+      }
+      const ruleRows = rules.map(rr => {
+        const lv = (rr.level || "").toLowerCase();
+        const ja = LEVEL_JA[lv] || rr.level || "";
+        return `<div class="rd-rule">
+          <span class="lvl lvl-${escapeHtml(lv)}">${escapeHtml(ja)}</span>
+          <span class="rd-title">${escapeHtml(rr.rule_title || rr.rule_id || "(名称不明)")}</span>
+          <span class="rd-count">${(rr.n || 0).toLocaleString()} 件</span>
+        </div>`;
+      }).join("");
+      const chanLine = chans.length
+        ? `<div class="rd-chans">記録源: ${chans.map(c => `${escapeHtml(c.channel)} (${c.n})`).join(" ・ ")}</div>`
+        : "";
+      panel.innerHTML = `<div class="rank-detail-inner">
+          <div class="rd-head">このパソコンで見つかった“あやしい動き” 上位 ${rules.length} 件</div>
+          ${ruleRows}
+          ${chanLine}
+          <div class="rd-note">数字は同じルールに当てはまった回数です。緊急/高 ほど危険度スコアへの影響が大きくなります。</div>
+        </div>`;
+      panel.dataset.loaded = "1";
+    } catch (e) {
+      panel.innerHTML = `<div class="muted small" style="padding:10px 14px">取得に失敗: ${escapeHtml(String(e))}</div>`;
+    }
+  }
+
+  { const rl = $("#ranking-list"); if (rl) {
+      rl.addEventListener("click", (e) => {
+        const item = e.target.closest(".rank-item");
+        if (item && rl.contains(item)) toggleRankingDetail(item);
+      });
+      rl.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        const row = e.target.closest(".rank-row");
+        if (!row) return;
+        e.preventDefault();
+        toggleRankingDetail(row.closest(".rank-item"));
+      });
+  } }
   { const _rb = $("#ranking-refresh"); if (_rb) _rb.onclick = loadRanking; }
 
   async function loadHosts() {
