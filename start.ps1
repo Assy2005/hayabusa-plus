@@ -26,8 +26,10 @@ $env:HAYABUSA_GUI_PORT = if ($env:HAYABUSA_GUI_PORT) { $env:HAYABUSA_GUI_PORT } 
 
 if ($Public) {
     $env:HAYABUSA_GUI_HOST = '0.0.0.0'
-    Write-Host "==> 公開(LAN)モード: 0.0.0.0 で待ち受けます。信頼できる LAN でのみ使用してください。" -ForegroundColor Yellow
-    Write-Host "    Windows ファイアウォールでポート $($env:HAYABUSA_GUI_PORT) の受信許可が必要です。" -ForegroundColor Yellow
+    # ASCII only: Windows PowerShell 5.1 misreads non-ASCII in .ps1 (cp932) and
+    # can break the line. The Python server prints a JP banner correctly anyway.
+    Write-Host "==> PUBLIC (LAN) mode: binding 0.0.0.0. Use only on a trusted LAN." -ForegroundColor Yellow
+    Write-Host ("    Allow inbound TCP port {0} in Windows Firewall." -f $env:HAYABUSA_GUI_PORT) -ForegroundColor Yellow
 }
 
 $workspace = Join-Path $here 'workspace'
