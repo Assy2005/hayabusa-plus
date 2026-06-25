@@ -62,8 +62,11 @@ __pycache__/
 /lookups/feodo_c2_ips.txt
 /lookups/*.meta.json
 
-# preview server config (local)
-.claude/launch.json
+# Claude Code / エージェント関連 (ローカルのみ・公開しない)
+.claude/
+CLAUDE.md
+.mcp.json
+**/memory/
 dist/
 docs/presentation/pptx/_qa/
 docs/presentation/pptx/_assets/
