@@ -893,6 +893,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/workspace":
+            # In public mode the workspace is shared, so listing it would leak
+            # every entrant's uploaded filenames (which embed PC/host names) to
+            # anyone on the LAN — and let them re-scan others' logs. The public
+            # UI never needs the listing (uploads auto-select), so return empty.
+            if NETWORK_MODE:
+                self._send_json({"uploads": [], "results": []})
+                return
             self._send_json(self._list_workspace())
             return
 
