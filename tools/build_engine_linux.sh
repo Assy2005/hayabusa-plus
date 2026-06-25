@@ -41,7 +41,7 @@ if [ -d bin/rules/hayabusa ]; then
   echo "[build] custom rules -> bin/rules/hayabusa/custom/ ($(ls rules-custom/*.yml | wc -l) 本)"
 else
   echo "[build] 注意: bin/rules がありません。Sigma ルールを取得してください:"
-  echo "          ./bin/hayabusa-fx update-rules ./bin/rules"
+  echo "          ./bin/hayabusa-fx update-rules -r ./bin/rules"
   echo "        取得後にこのスクリプトを再実行すると custom ルールも配置されます。"
 fi
 

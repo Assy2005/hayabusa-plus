@@ -237,7 +237,7 @@ cd hayabusa-plus
 bash tools/build_engine_linux.sh          # → bin/hayabusa-fx を生成
 
 # 2) Sigma ルールが未取得なら取得し、もう一度ビルドスクリプトで custom を配置
-./bin/hayabusa-fx update-rules ./bin/rules
+./bin/hayabusa-fx update-rules -r ./bin/rules
 bash tools/build_engine_linux.sh
 
 # 3) IoC フィード取得 (任意・約 8 万件)
