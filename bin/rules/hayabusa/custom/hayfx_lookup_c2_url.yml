@@ -1,0 +1,57 @@
+title: Active C2 URL / domain accessed (URLhaus match)
+id: lookup-urlhaus-c2
+status: test
+description: |
+  abuse.ch URLhaus フィード収載の活動中 malware 配布 URL に対する
+  通信痕跡を検知。以下 3 種類のチャネルから拾う:
+
+   * Sysmon EID 22 (DnsQuery) の QueryName / QueryResults
+   * Sysmon EID 3 (NetworkConnection) の DestinationHostname
+   * PowerShell EID 4104 のスクリプト本文 (Invoke-WebRequest / curl 等)
+
+  実体: lookups/urlhaus_urls.txt (定期取得、約 78,000 件)
+author: hayabusa-fx
+date: 2026/05/21
+references:
+  - https://urlhaus.abuse.ch/
+  - https://attack.mitre.org/techniques/T1071/001/
+  - https://attack.mitre.org/techniques/T1105/
+logsource:
+  product: windows
+lookup:
+  - name: urlhaus_urls
+    file: ../../../../lookups/urlhaus_urls.txt
+detection:
+  sel_dns:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 22
+    QueryName|lookup: urlhaus_urls
+  sel_netconn:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 3
+    DestinationHostname|lookup: urlhaus_urls
+  sel_ps:
+    Channel: 'Microsoft-Windows-PowerShell/Operational'
+    EventID: 4104
+    ScriptBlockText|lookup: urlhaus_urls
+  condition: 1 of sel_*
+falsepositives:
+  - URLhaus の偽陽性 (極めて稀)。
+  - セキュリティリサーチャの調査トラフィック (除外 SID 推奨)。
+level: critical
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+  - attack.t1105
+score:
+  base: 93
+  modifiers:
+    - if: corroborated_within(10m, ['lookup-malware-bazaar-exec']) then +5
+evasion: medium
+notes: |
+  Bypass cost (attacker): MEDIUM.
+  - URLhaus は活動中の URL のみ収載。ドメインを毎日変える攻撃者
+    (DGA) には弱い。
+  - HTTPS DoH 経由の DNS は Sysmon 22 に乗らない場合あり。
+    その場合 NetworkConnection の DestinationIp を Feodo フィードと
+    組合せる方が確実 (sibling rule hayfx_lookup_c2_ip.yml で対応予定)。

@@ -2,16 +2,12 @@
 # Hayabusa-FX (hayabusa-plus) — gitignore
 # ============================================================
 
-# ── 実行ファイル・バイナリ ──
-# 公式ビルドや fork のビルド成果物はリポジトリに含めず GitHub Release で配布する。
-bin/*.exe
-bin/hayabusa
-bin/hayabusa-*
-
-# Hayabusa 公式 zip 同梱のルールツリーと設定 (~60MB)。
-# bin/ は実行時に「公式 zip を展開してここに置く」ものとして扱う。
-bin/rules/
-bin/config/
+# ── 実行ファイル・ルール ──
+# `git clone` だけでそのまま起動できるよう、fork 版バイナリ・config・ルールツリーは
+# コミットする (Windows ネイティブ実行・LAN 公開がワンステップで動くように)。
+# 除外するのは上流バイナリ (fork 版があれば不要) と実行時ログのみ。
+bin/hayabusa-3.9.0-win-x64.exe
+bin/logs/
 
 # Rust ビルド成果物
 engine/target/

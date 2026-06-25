@@ -1,0 +1,66 @@
+title: EventLog service stop / disable attempted
+id: af-eventlog-service-tamper
+status: stable
+description: |
+  Stopping or disabling the Windows EventLog service silences ALL further
+  log writes via the EventLog API. Because Sysmon writes via its own
+  driver to its own channel, Sysmon EID 1 still captures the command
+  that performed the kill — that's our detection vector. This rule
+  catches the three common invocations: sc.exe / net.exe / PowerShell.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://attack.mitre.org/techniques/T1562/002/
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  sel_channel:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+  sel_target_eventlog:
+    CommandLine|contains:
+      - 'eventlog'
+      - 'EventLog'
+      - 'Windows Event Log'
+  sel_stop_form:
+    CommandLine|contains:
+      - ' stop '
+      - 'Stop-Service'
+      - 'config eventlog start= disabled'
+      - 'sc config eventlog start='
+      - 'Set-Service'
+  sel_actor:
+    Image|endswith:
+      - '\sc.exe'
+      - '\net.exe'
+      - '\powershell.exe'
+      - '\pwsh.exe'
+      - '\cmd.exe'
+  condition: sel_channel and sel_target_eventlog and sel_stop_form and sel_actor
+falsepositives:
+  - Patch / repair scripts run by SCCM. Confirm via parent image and user.
+  - Disaster recovery tooling. Allow-list by parent + user SID.
+level: critical
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+  - attack.t1562.002
+score:
+  base: 90
+  modifiers:
+    - if: corroborated_within(5m, ['af-wevtutil-clear']) then +10
+    - if: User|endswith '$' then -10
+evasion: high
+notes: |
+  Bypass cost (attacker): HIGH for full silence.
+  - Calling ControlService(SERVICE_CONTROL_STOP) via direct WinAPI from
+    code avoids sc/net entirely but still produces:
+      - System 7036 (service entered the stopped state)
+      - Possible Sysmon EID 7 (image load of services-related modules
+        in the malicious process)
+    A sibling rule keyed on 7036 + service name == EventLog covers it.
+  - Race condition: an attacker can stop EventLog BEFORE Sysmon EID 1
+    propagates. In practice Sysmon writes synchronously, so the order
+    is reliable on modern Windows.

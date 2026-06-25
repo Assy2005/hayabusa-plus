@@ -1,0 +1,68 @@
+title: certutil.exe used to fetch a remote payload (urlcache / verifyctl)
+id: certutil-remote-fetch
+status: stable
+description: |
+  certutil.exe is a signed Microsoft LOLBIN. Among its dozens of
+  switches, `-urlcache`, `-verifyctl` and `-split` are the ones routinely
+  abused to download from HTTP(S) endpoints. Legitimate enterprise use is
+  extremely rare; for the few exceptions (Microsoft's own CTL fetches),
+  the destination is `*.windowsupdate.com` / `*.digicert.com` and we
+  exclude those explicitly.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://lolbas-project.github.io/lolbas/Binaries/Certutil/
+  - https://attack.mitre.org/techniques/T1105/
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\certutil.exe'
+  fetch_switch:
+    CommandLine|contains|all:
+      - '-'
+    CommandLine|contains:
+      - 'urlcache'
+      - 'verifyctl'
+      - 'split'
+  network_target:
+    CommandLine|contains:
+      - 'http://'
+      - 'https://'
+      - 'ftp://'
+  filter_microsoft_pki:
+    CommandLine|contains:
+      - '.windowsupdate.com'
+      - '.microsoft.com'
+      - '.digicert.com'
+      - 'crl.entrust.net'
+      - 'ocsp.'
+  condition: selection and fetch_switch and network_target and not filter_microsoft_pki
+falsepositives:
+  - PKI auditing using certutil against an internal CA. Add the internal
+    CA hostname to filter_microsoft_pki.
+  - Some build pipelines fetch a CTL via certutil; allow the build user.
+level: critical
+tags:
+  - attack.command_and_control
+  - attack.t1105
+score:
+  base: 90
+  modifiers:
+    - if: parent.Image|endswith '\powershell.exe' then +5
+    - if: parent.Image|endswith '\wscript.exe' then +10
+    - if: parent.Image|endswith '\cscript.exe' then +10
+    - if: CommandLine|contains 'decode' then +5      # download + decode chain
+evasion: medium
+notes: |
+  Bypass cost (attacker): MEDIUM.
+  - Switching to `bitsadmin /transfer` or `curl.exe` is trivial — each is
+    covered by its own LOLBIN rule.
+  - Renaming certutil.exe is caught by `Image_original_filename` from
+    Sysmon (OriginalFileName field), but we deliberately do NOT pin to
+    it here because Hayabusa's default profile drops the field; if your
+    Sysmon config includes <OriginalFileName/> in EventID 1, prefer that
+    match.

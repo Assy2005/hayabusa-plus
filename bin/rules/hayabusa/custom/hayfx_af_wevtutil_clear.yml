@@ -1,0 +1,68 @@
+title: Event log cleared via wevtutil / Clear-EventLog
+id: af-wevtutil-clear
+status: stable
+description: |
+  Direct CLI invocation of the "clear log" operation. wevtutil cl is the
+  canonical built-in form; PowerShell exposes the same primitive via
+  Clear-EventLog / Remove-EventLog. Legitimate use is extremely rare
+  outside OS deployment (sysprep) and DC promotion, so this is one of
+  the cleanest anti-forensic signals available without correlation.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1070/001/
+  - https://lolbas-project.github.io/lolbas/Binaries/Wevtutil/
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  sel_sysmon_wevtutil:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\wevtutil.exe'
+    CommandLine|contains:
+      - ' cl '
+      - ' cl"'
+      - ' clear-log'
+      - '/e:false'        # event publisher silenced
+  sel_security_4688_wevtutil:
+    Channel: 'Security'
+    EventID: 4688
+    NewProcessName|endswith: '\wevtutil.exe'
+    CommandLine|contains:
+      - ' cl '
+      - ' clear-log'
+  sel_ps_clear:
+    Channel: 'Microsoft-Windows-PowerShell/Operational'
+    EventID: 4104
+    ScriptBlockText|contains:
+      - 'Clear-EventLog'
+      - 'Remove-EventLog'
+      - 'WevtUtil cl '
+      - 'wevtutil cl '
+  filter_sysprep:
+    ParentImage|endswith:
+      - '\sysprep.exe'
+      - '\setupcl.exe'
+  condition: (1 of sel_*) and not filter_sysprep
+falsepositives:
+  - OS sysprep / image deployment processes (filtered above).
+  - Documented log-archival scripts. Allow-list by parent path or user SID.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1070.001
+score:
+  base: 85
+  modifiers:
+    - if: parent.Image|endswith '\cmd.exe' then +5
+    - if: parent.Image|endswith '\powershell.exe' then +5
+    - if: User|endswith '$' then -10      # machine context (GPO push)
+evasion: medium
+notes: |
+  Bypass cost (attacker): MEDIUM.
+  - Direct Win32 API (EvtClearLog) avoids the wevtutil binary but still
+    triggers Security 1102 inside the cleared channel itself — that
+    record is the last write into the log and survives.
+  - Stopping the EventLog service before clearing is caught by the
+    sibling rule "EventLog service stopped".

@@ -1,0 +1,63 @@
+title: Audit policy weakened (Security EID 4719)
+id: af-audit-policy-weakened
+status: stable
+description: |
+  Security EID 4719 fires whenever an audit subcategory's setting
+  changes. By itself it is noisy (every GPO push generates a batch).
+  Two refinements make it precise:
+    (1) the SubjectUserName is NOT a machine account (filters GPO push),
+    (2) the new value REMOVES at least one of Success/Failure auditing.
+  These together capture the "attacker disabling audit before action"
+  pattern with near-zero FP outside intentional admin tuning.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1562/002/
+  - https://docs.microsoft.com/en-us/windows/security/threat-protection/auditing/event-4719
+logsource:
+  product: windows
+  service: security
+detection:
+  sel_4719:
+    Channel: 'Security'
+    EventID: 4719
+  sel_weakening:
+    # Windows encodes subcategory transitions as %%84NN tokens in
+    # AuditPolicyChanges. The "removed" variants:
+    #   %%8448 = Success added
+    #   %%8449 = Success removed
+    #   %%8450 = Failure added
+    #   %%8451 = Failure removed
+    AuditPolicyChanges|contains:
+      - '%%8449'
+      - '%%8451'
+      - 'Success removed'    # English-localised render
+      - 'Failure removed'
+  filter_machine_subject:
+    SubjectUserName|endswith: '$'
+  filter_local_system:
+    SubjectUserSid: 'S-1-5-18'
+  condition: sel_4719 and sel_weakening and not (filter_machine_subject or filter_local_system)
+falsepositives:
+  - Intentional admin tightening that happens to remove an audit (rare
+    in practice — usually Success+Failure is added, not removed).
+  - Some EDR products deploy via 4719 changes; allow-list by their SID.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562.002
+score:
+  base: 85
+  modifiers:
+    - if: corroborated_within(10m, ['af-eventlog-service-tamper']) then +10
+    - if: corroborated_within(30m, ['af-wevtutil-clear']) then +10
+evasion: medium
+notes: |
+  Bypass cost (attacker): MEDIUM.
+  - Disabling the Security channel before changing audit policy avoids
+    4719 entirely. That requires stopping EventLog or unloading audit
+    providers — caught by hayfx_af_eventlog_service_tamper.yml.
+  - The 4719 record is one of the few that includes the EXACT subcategory
+    being weakened ("Process Creation", "Audit Account Logon"). Worth
+    surfacing in alert details so the analyst can pivot on what visibility
+    was just lost.

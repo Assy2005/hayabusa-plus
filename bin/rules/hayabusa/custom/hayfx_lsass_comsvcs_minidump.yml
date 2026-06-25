@@ -1,0 +1,60 @@
+title: LSASS dump via comsvcs.dll MiniDump export
+id: 5a7c11d1-comsvcs-minidump
+status: stable
+description: |
+  Detects the well-known LSASS credential dumping technique that invokes
+  the unexported MiniDump function inside %WINDIR%\System32\comsvcs.dll via
+  rundll32.exe (`rundll32.exe comsvcs.dll, MiniDump <pid> <out> full`).
+  The function ordinal/name and the literal "full" argument are intrinsic
+  to the technique — variants exist but at the cost of breaking
+  functionality, which is the kind of "feature attackers can't move" that
+  makes a rule durable.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1003/001/
+  - https://lolbas-project.github.io/lolbas/Libraries/Comsvcs/
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection_image:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\rundll32.exe'
+  selection_cmd:
+    CommandLine|contains|all:
+      - 'comsvcs'
+      - 'MiniDump'
+  filter_benign_path:
+    # comsvcs.dll only legitimately ships in System32 / SysWOW64. Any other
+    # path is itself suspicious and handled by a sibling rule.
+    CommandLine|contains:
+      - '\\system32\\comsvcs'
+      - '\\syswow64\\comsvcs'
+      - 'comsvcs.dll,'
+      - 'comsvcs,'
+  condition: selection_image and selection_cmd
+falsepositives:
+  - Incident responders manually validating the detection on a victim host.
+    Mitigate by allow-listing the responder's user SID via filter pack.
+level: critical
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+# hayfx extensions — recognised by our forked engine, ignored by upstream.
+score:
+  base: 90
+  modifiers:
+    - if: User|contains 'SYSTEM' then +5
+    - if: parent.Image|endswith '\explorer.exe' then +5  # interactive launch is rare-but-bad
+evasion: medium
+notes: |
+  Bypass cost (attacker): MEDIUM.
+  - Renaming rundll32.exe is trivial but the (image+cmdline) AND condition
+    requires altering both fields, and the alternate-image variant is
+    caught by a companion rule looking for "comsvcs.dll, MiniDump" in any
+    process command line.
+  - Calling MiniDumpWriteDump directly via WinAPI evades this rule but is
+    caught by Sysmon EID 10 (`ProcessAccess` on lsass.exe with
+    GrantedAccess matching dump masks).

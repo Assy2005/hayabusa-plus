@@ -1,0 +1,59 @@
+title: Service installed with binary path under a user-writable directory
+id: 7045-userwritable-svc
+status: stable
+description: |
+  Windows service installation (Security 4697 or System 7045) where the
+  executable path resolves to a directory normal users can write to
+  (`C:\Users\`, `C:\Temp\`, `C:\Windows\Temp\`, `%PROGRAMDATA%`, `%APPDATA%`).
+  Legitimate enterprise software never installs services from those paths —
+  this is one of the cleanest indicators of malicious persistence
+  available from raw Event Log without further correlation.
+author: hayabusa-fx
+date: 2026/05/18
+references:
+  - https://attack.mitre.org/techniques/T1543/003/
+logsource:
+  product: windows
+  service: system
+detection:
+  selection:
+    Channel: 'System'
+    EventID: 7045
+  selection_path:
+    ImagePath|contains:
+      - 'C:\Users\'
+      - 'C:\Temp\'
+      - 'C:\Windows\Temp\'
+      - 'C:\ProgramData\'
+      - '\AppData\Local\Temp\'
+      - '\AppData\Roaming\'
+  filter_msi_setup:
+    # Microsoft Installer occasionally drops short-lived setup services
+    # under %ProgramData% with a recognisable name + SetupHost ancestry.
+    # If your MDM tools do too, extend this filter.
+    ImagePath|contains:
+      - 'MSIInstaller'
+      - 'SetupHost'
+  condition: selection and selection_path and not filter_msi_setup
+falsepositives:
+  - Misbehaving installers writing service binaries into ProgramData.
+    Mitigate with a per-vendor allowlist in filters/vendor_installers.yml.
+level: high
+tags:
+  - attack.persistence
+  - attack.t1543.003
+score:
+  base: 80
+  modifiers:
+    - if: AccountName|startswith 'NT AUTHORITY\SYSTEM' then +5
+    - if: ImagePath|contains '.scr ' then +10        # .scr binary masquerading
+    - if: ImagePath|contains 'powershell' then +10
+evasion: low
+notes: |
+  Bypass cost (attacker): LOW for path, HIGH for behaviour.
+  - The attacker can place the binary under `Program Files\` (admin-only).
+    That requires admin already, which is a strong signal in itself and
+    is detected by the companion "service binary unsigned + new" rule.
+  - Trojanising an existing system service (StartType change, not new
+    install) bypasses 7045 entirely — see hayfx_service_modify_unusual.yml
+    (out of scope here).
