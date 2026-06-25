@@ -97,8 +97,8 @@
               <li>自分の Windows PC で右クリック →
                 <b>「管理者として実行」</b>。デスクトップに
                 <code>windows_logs_*.zip</code> が作られます。</li>
-              <li>その ZIP を<b>解凍</b>し、中の <code>.evtx</code> を下の枠へ
-                <b>ドロップ</b>してスキャン。チーム名を入れるとその名前で並びます。</li>
+              <li>できた <code>windows_logs_*.zip</code> を<b>そのまま</b>下の枠へ
+                <b>ドロップ</b>してスキャン（自動で展開します）。チーム名を入れるとその名前で並びます。</li>
             </ol>
             <div class="muted small">全員が同じツールで集めるので、調べるログ種別がそろい、危険度スコアを公平に比べられます。</div>
           </div>
@@ -124,11 +124,11 @@
 
           <div id="drop-zone" class="drop-zone">
             <div class="drop-icon">↓</div>
-            <div class="drop-title">EVTX をここにドロップ</div>
-            <div class="muted small">または</div>
+            <div class="drop-title">EVTX または ZIP をここにドロップ</div>
+            <div class="muted small">ZIP（収集ツールの出力）は自動で展開します ・ または</div>
             <label class="btn-like">
               ファイルを選択
-              <input type="file" id="upload-input" accept=".evtx" hidden multiple />
+              <input type="file" id="upload-input" accept=".evtx,.zip" hidden multiple />
             </label>
             <div class="muted small" id="upload-status"></div>
           </div>

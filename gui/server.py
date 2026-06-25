@@ -32,6 +32,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -1746,12 +1747,87 @@ class Handler(BaseHTTPRequestHandler):
             target = UPLOAD_DIR / filename
             with open(target, "wb") as f:
                 f.write(payload)
-            saved.append({"name": filename, "size": len(payload),
-                          "rel": str(target.relative_to(WORKSPACE)).replace("\\", "/")})
+
+            # A .zip (e.g. the output of collect_windows_logs.bat) is unpacked
+            # into a folder of .evtx and offered as a single directory target,
+            # so the whole submission is scanned in one job.
+            if filename.lower().endswith(".zip"):
+                try:
+                    ddir, names = self._extract_evtx_zip(target)
+                finally:
+                    try:
+                        target.unlink()          # the .zip itself isn't scannable
+                    except OSError:
+                        pass
+                if not names:
+                    saved.append({"name": filename,
+                                  "error": "ZIP の中に .evtx が見つかりませんでした"})
+                    try:
+                        ddir.rmdir()
+                    except OSError:
+                        pass
+                    continue
+                saved.append({
+                    "name": ddir.name, "kind": "dir", "count": len(names),
+                    "rel": str(ddir.relative_to(WORKSPACE)).replace("\\", "/"),
+                })
+            else:
+                saved.append({"name": filename, "size": len(payload),
+                              "rel": str(target.relative_to(WORKSPACE)).replace("\\", "/")})
         if not saved:
             self._send_json({"error": "no file part found"}, 400)
             return
         self._send_json({"saved": saved})
+
+    # Caps to keep a malicious/huge archive from filling the disk.
+    _ZIP_MAX_FILES = 100
+    _ZIP_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024   # 4 GiB uncompressed
+
+    def _extract_evtx_zip(self, zip_path: Path) -> tuple[Path, list[str]]:
+        """Extract only the .evtx members of a zip into a fresh folder.
+
+        Hardened against zip-slip (member names are reduced to a sanitised
+        basename) and zip bombs (file-count and total-size caps). Returns the
+        destination directory and the list of extracted filenames.
+        """
+        stem = re.sub(r"[^A-Za-z0-9._\-]", "_", zip_path.stem) or "logs"
+        dest = UPLOAD_DIR / f"{stem}_evtx"
+        i = 1
+        while dest.exists():
+            dest = UPLOAD_DIR / f"{stem}_evtx_{i}"
+            i += 1
+        dest.mkdir(parents=True)
+
+        names: list[str] = []
+        total = 0
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    base = os.path.basename(info.filename)
+                    if not base.lower().endswith(".evtx"):
+                        continue
+                    if len(names) >= self._ZIP_MAX_FILES:
+                        break
+                    total += info.file_size
+                    if total > self._ZIP_MAX_TOTAL_BYTES:
+                        break
+                    safe = re.sub(r"[^A-Za-z0-9._\-]", "_", base)
+                    if not safe or safe in (".", ".."):
+                        continue
+                    out_path = dest / safe
+                    # Avoid clobbering if two members sanitise to the same name.
+                    n = 1
+                    while out_path.exists():
+                        out_path = dest / f"{n}_{safe}"
+                        n += 1
+                    with zf.open(info) as src, open(out_path, "wb") as out:
+                        shutil.copyfileobj(src, out, length=1024 * 1024)
+                    names.append(out_path.name)
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"壊れた ZIP ファイルです: {exc}") from exc
+        return dest, names
 
 
 # ---------------------------------------------------------------------------

@@ -440,16 +440,19 @@ console.log("[app] app.js v2026-05-21-c executing");
   uploadInput.addEventListener("change", () => uploadFiles(uploadInput.files));
 
   async function uploadFiles(fileList) {
-    const files = Array.from(fileList || []).filter(f => /\.evtx$/i.test(f.name));
+    // .evtx をそのまま、または .zip (収集ツールの出力) をまとめて受け付ける。
+    const files = Array.from(fileList || []).filter(f => /\.(evtx|zip)$/i.test(f.name));
     if (!files.length) {
-      $("#upload-status").textContent = ".evtx ファイルだけ受け付けます";
+      $("#upload-status").textContent = ".evtx または .zip ファイルを入れてください";
       return;
     }
     let lastSaved = null;
     for (const f of files) {
       const fd = new FormData(); fd.append("file", f);
       $("#upload-status").textContent =
-        `アップロード中… ${f.name} (${fmtSize(f.size)})`;
+        /\.zip$/i.test(f.name)
+          ? `アップロード中…（ZIP を展開します） ${f.name} (${fmtSize(f.size)})`
+          : `アップロード中… ${f.name} (${fmtSize(f.size)})`;
       try {
         const r = await fetch("/api/upload", { method: "POST", body: fd });
         const d = await r.json();
@@ -457,21 +460,30 @@ console.log("[app] app.js v2026-05-21-c executing");
           $("#upload-status").textContent = "エラー: " + d.error;
           return;
         }
-        lastSaved = d.saved[0];
+        const entry = (d.saved || [])[0];
+        if (entry && entry.error) {   // 例: ZIP 内に .evtx が無い
+          $("#upload-status").textContent = "エラー: " + entry.error;
+          return;
+        }
+        lastSaved = entry;
       } catch (e) {
         $("#upload-status").textContent = "通信エラー: " + e;
         return;
       }
     }
-    $("#upload-status").textContent =
-      files.length === 1
-        ? `保存しました → ${lastSaved.rel}`
-        : `${files.length} 個のファイルを保存しました`;
+    if (lastSaved && lastSaved.kind === "dir") {
+      $("#upload-status").textContent =
+        `ZIP を展開しました → ${lastSaved.count} 個の .evtx（まとめてスキャンします）`;
+    } else {
+      $("#upload-status").textContent =
+        files.length === 1
+          ? `保存しました → ${lastSaved.rel}`
+          : `${files.length} 個のファイルを保存しました`;
+    }
     await refreshWorkspace();
     if (lastSaved) {
-      // Auto-select the most recently uploaded file; the user can still
-      // click another row to override.
-      selectTarget({ ...lastSaved, type: "file" });
+      // 直近のアップロードを自動選択（ZIP 展開ならフォルダ=ディレクトリ対象）。
+      selectTarget({ ...lastSaved, type: lastSaved.kind === "dir" ? "dir" : "file" });
     }
   }
 
