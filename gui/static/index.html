@@ -270,11 +270,8 @@
           <div id="selection-label" class="selection-empty">まだ選択されていません</div>
           <input id="target-path" type="hidden" />
         </div>
-        <div class="nickname-field public-only">
-          <label for="nickname" class="muted small">チーム名 / ニックネーム</label>
-          <input id="nickname" type="text" maxlength="40"
-                 placeholder="例: あぶないPC選手権 No.1" autocomplete="off" />
-        </div>
+        <button id="nickname-edit" type="button" class="ghost-btn small public-only"
+                title="ランキングに表示される名前を変更">名前を変更</button>
         <button id="scan-btn" class="primary scan-go" disabled>
           <span class="scan-go-main">スキャン開始</span>
           <span class="scan-go-sub" id="scan-summary">先に対象を選んでください</span>
@@ -816,6 +813,32 @@
       <div class="modal-foot">
         <span id="channels-summary" class="muted small"></span>
         <button id="channels-confirm" class="primary">この選択でスキャン</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- チーム名入力モーダル (公開モード): 「スキャン開始」初回に1度だけ表示。
+       入力名はブラウザに記憶し、次回以降は出さずにその名前で更新する。 -->
+  <div id="nickname-modal" class="modal is-hidden"
+       onclick="if(event.target===this)this.classList.add('is-hidden')">
+    <div class="modal-card" style="max-width:440px">
+      <div class="modal-head">
+        <h2>🏆 チーム名 / ニックネーム</h2>
+        <button class="ghost-btn small"
+                onclick="document.getElementById('nickname-modal').classList.add('is-hidden')"
+                title="閉じる (Esc)">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="muted small">ランキングに表示される名前です。最初の1回だけ入力すれば、
+          次回からはこの名前で自動更新されます。（空のままでもOK：PC名で表示されます）</div>
+        <input id="nickname" type="text" maxlength="40"
+               placeholder="例: あぶないPC選手権 No.1" autocomplete="off"
+               style="padding:9px 11px;border:1px solid var(--line-strong);
+                      border-radius:8px;font-size:15px;width:100%" />
+      </div>
+      <div class="modal-foot">
+        <span class="muted small">あとで変えたいときは画面下の「名前を変更」から。</span>
+        <button id="nickname-confirm" class="primary">この名前で開始</button>
       </div>
     </div>
   </div>

@@ -564,12 +564,21 @@ console.log("[app] app.js v2026-05-21-c executing");
 
   // -------- scan submission --------
   let liveES = null;
-  $("#scan-btn").onclick = async () => {
-    if ($("#scan-btn").disabled) return;
+
+  // ニックネームはブラウザに記憶。値が "" でも「キーが存在する=入力済み」と扱い、
+  // 2回目以降はモーダルを出さずにその名前でランキング更新する。
+  const NICK_KEY = "hayabusa_nickname";
+  const storedNick = () => { try { return localStorage.getItem(NICK_KEY); } catch { return null; } };
+  const setStoredNick = (v) => { try { localStorage.setItem(NICK_KEY, v); } catch {} };
+  { const n = storedNick(); if (n != null && $("#nickname")) $("#nickname").value = n; }
+
+  function buildScanParams() {
     const targetType = $("#target-type").value;
-    const params = {
+    // 公開モードは記憶済みニックネームを使用。ローカルは入力欄(あれば)。
+    const nick = (storedNick() ?? ($("#nickname")?.value || "")).trim();
+    return {
       target: { type: targetType, path: $("#target-path").value.trim() },
-      nickname: ($("#nickname")?.value || "").trim(),
+      nickname: nick,
       allow_live: $("#allow-live").checked,
       min_level: $("#min-level").value,
       eid_filter: $("#eid-filter").checked,
@@ -581,14 +590,49 @@ console.log("[app] app.js v2026-05-21-c executing");
       timeline_start: $("#ts-start").value.trim() || null,
       timeline_end: $("#ts-end").value.trim() || null,
     };
+  }
+
+  async function startScan() {
     const r = await fetch("/api/scan", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params)
+      body: JSON.stringify(buildScanParams())
     });
     const d = await r.json();
     if (d.error) { alert("スキャンを開始できませんでした: " + d.error); return; }
     bindLive(d.job_id);
+  }
+
+  function openNicknameModal(startAfter) {
+    const m = $("#nickname-modal"); if (!m) { startScan(); return; }
+    const n = storedNick(); if (n != null && $("#nickname")) $("#nickname").value = n;
+    m.dataset.startAfter = startAfter ? "1" : "";
+    m.classList.remove("is-hidden");
+    setTimeout(() => $("#nickname")?.focus(), 50);
+  }
+
+  $("#scan-btn").onclick = () => {
+    if ($("#scan-btn").disabled) return;
+    // 公開モードで未入力なら、初回だけ名前入力モーダルを出してから開始。
+    if (document.body.classList.contains("public-mode") && storedNick() === null) {
+      openNicknameModal(true);
+      return;
+    }
+    startScan();
   };
+
+  {
+    const confirmNick = () => {
+      const m = $("#nickname-modal");
+      setStoredNick(($("#nickname")?.value || "").trim());
+      m.classList.add("is-hidden");
+      if (m.dataset.startAfter === "1") { m.dataset.startAfter = ""; startScan(); }
+    };
+    $("#nickname-confirm")?.addEventListener("click", confirmNick);
+    $("#nickname")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); confirmNick(); }
+    });
+    $("#nickname-edit")?.addEventListener("click", () => openNicknameModal(false));
+  }
 
   // Refresh button on the workspace panel.
   $("#ws-refresh").onclick = refreshWorkspace;
