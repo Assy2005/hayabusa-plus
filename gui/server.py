@@ -351,6 +351,19 @@ def build_hayabusa_argv(job: Job, params: dict) -> list[str]:
     arbitrary user-supplied flags through — that would let the UI flip
     --live-analysis on hosts where it shouldn't run.
     """
+    # Public (network) "danger ranking" mode: lock the scan parameters so
+    # every entrant is scored on identical settings. Only the target comes
+    # from the request — preset / min-level / tags / time-window are ignored.
+    # Canonical = the "標準" preset: medium+, dedupe on, all-rules off.
+    if NETWORK_MODE:
+        params = {
+            "target": params.get("target", {}),
+            "allow_live": params.get("allow_live", False),
+            "nickname": params.get("nickname", ""),
+            "min_level": "medium",
+            "remove_duplicates": True,
+        }
+
     argv: list[str] = [str(HAYABUSA_BIN), "json-timeline", "--no-wizard",
                        "-L", "-o", str(job.result_jsonl),
                        "-C", "-q", "-K", "-s", "-b",
@@ -1009,6 +1022,24 @@ class Handler(BaseHTTPRequestHandler):
                 "platform": sys.platform,
                 "live_supported": (sys.platform == "win32" and not NETWORK_MODE),
             })
+            return
+
+        if path == "/api/collector":
+            # Hand the Windows log-collection .bat to ranking entrants so they
+            # can dump a standardised set of EVTX channels and upload them.
+            bat = ROOT / "tools" / "collect_windows_logs.bat"
+            if not bat.exists():
+                self._send_json({"error": "collector not available"}, 404)
+                return
+            data = bat.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition",
+                             'attachment; filename="collect_windows_logs.bat"')
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
             return
 
         if path == "/api/ranking":

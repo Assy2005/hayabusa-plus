@@ -691,6 +691,22 @@ footer.status-bar .right{margin-left:auto;display:flex;gap:10px}
 body.public-mode .public-only { display: flex !important; }
 body.public-mode .local-only { display: none !important; }
 
+/* tutorial + fixed-settings cards stack as blocks, not flex rows */
+body.public-mode .pub-tutorial, body.public-mode .pub-fixed { display: block !important; }
+.pub-tutorial {
+  border: 1px solid var(--line); background: linear-gradient(180deg, #FFF7DA, var(--panel) 70%);
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 12px;
+}
+.pub-tutorial .pt-title { font-weight: 800; font-size: 14px; color: var(--text); margin-bottom: 6px; }
+.pt-steps { margin: 0 0 8px; padding-left: 20px; }
+.pt-steps li { font-size: 13px; color: var(--text); margin: 6px 0; line-height: 1.5; }
+.pt-steps .btn-like { display: inline-block; margin-top: 4px; }
+.pub-fixed {
+  border: 1px solid var(--line); background: var(--panel-2, var(--panel));
+  border-radius: 10px; padding: 10px 14px; margin-bottom: 10px;
+}
+.pub-fixed .pf-title { font-weight: 700; font-size: 13px; color: var(--text); margin-bottom: 3px; }
+
 .nickname-field { flex-direction: column; gap: 2px; align-items: flex-start; }
 .nickname-field input {
   padding: 7px 10px; border: 1px solid var(--line-strong);
