@@ -759,16 +759,18 @@ class Store:
     def ranking(self, include_suppressed: bool = False) -> list[dict]:
         """Leaderboard for the public 'danger ranking' mode.
 
-        Groups detections by the uploader's nickname when present, else by
-        the Computer name in the logs. Same severity-weighted risk score as
-        the host view, plus a 1-based rank.
+        Grouped by the Computer name in the logs — **one entry per PC**. The
+        uploader nickname is only a display label (the most recent one given
+        for that computer), so renaming and re-uploading can't farm multiple
+        ranking slots for the same machine.
+
+        Same severity-weighted risk score as the host view, plus a 1-based rank.
         """
         where = " WHERE 1=1"
         if not include_suppressed:
             where += " AND s.id IS NULL"
         sql = (
-            "SELECT COALESCE(NULLIF(l.nickname, ''), d.computer, '(不明)') AS name, "
-            "       MAX(CASE WHEN l.nickname IS NOT NULL THEN 1 ELSE 0 END) AS is_named, "
+            "SELECT d.computer AS computer, "
             "       COUNT(DISTINCT d.job_id || ':' || d.line_no) AS total, "
             "       SUM(CASE WHEN d.level='critical' THEN 1 ELSE 0 END) AS critical_n, "
             "       SUM(CASE WHEN d.level='high'     THEN 1 ELSE 0 END) AS high_n, "
@@ -780,16 +782,48 @@ class Store:
             "       COUNT(DISTINCT d.rule_id) AS rules_seen, "
             "       MIN(d.ts) AS first_seen, MAX(d.ts) AS last_seen "
             "FROM detections d "
-            "LEFT JOIN labels l ON l.job_id = d.job_id"
             f"{self._SUPP_JOIN}{where} "
-            "GROUP BY name ORDER BY total DESC")
+            "GROUP BY d.computer ORDER BY total DESC")
         rows = [dict(r) for r in self._conn().execute(sql)]
+
+        # Resolve the display nickname per computer: the most recently set
+        # label among all jobs that produced detections for that computer.
+        labels = self._latest_nickname_by_computer()
         for r in rows:
+            comp = r.get("computer") or "(不明)"
+            nick = labels.get(comp)
+            r["name"] = nick or comp or "(不明)"
+            r["is_named"] = 1 if nick else 0
             r["risk_score"] = self._risk_score(r)
         rows.sort(key=lambda r: r["risk_score"], reverse=True)
         for i, r in enumerate(rows, start=1):
             r["rank"] = i
         return rows
+
+    def _latest_nickname_by_computer(self) -> dict[str, str]:
+        """Map each Computer name to the most recently assigned nickname.
+
+        A computer can be scanned by several jobs, each with its own (or no)
+        nickname. We pick the nickname from the job with the newest label so
+        the leaderboard shows the latest team name without ever splitting a
+        single PC into multiple rows.
+        """
+        sql = (
+            "SELECT d.computer AS computer, l.nickname AS nickname, "
+            "       l.created_at AS created_at "
+            "FROM labels l JOIN detections d ON d.job_id = l.job_id "
+            "WHERE l.nickname IS NOT NULL AND l.nickname <> '' "
+            "GROUP BY d.computer, l.job_id")
+        latest: dict[str, tuple[float, str]] = {}
+        for row in self._conn().execute(sql):
+            comp = row["computer"]
+            if comp is None:
+                continue
+            ca = row["created_at"] or 0
+            cur = latest.get(comp)
+            if cur is None or ca >= cur[0]:
+                latest[comp] = (ca, row["nickname"])
+        return {c: v[1] for c, v in latest.items()}
 
     @classmethod
     def _risk_score(cls, row: dict) -> float:
