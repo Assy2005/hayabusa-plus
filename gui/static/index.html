@@ -287,70 +287,66 @@
     <section id="tab-dashboard" class="tab-panel">
       <div class="tab-intro">
         <span class="ti-icon">📊</span>
-        <span class="ti-text"><strong>ここでは、これまでの検出結果を「全体像」で見られます。</strong>
-          重大なものが何件あるか、どのパソコンが多いか、時間ごとの推移などが一目で分かります。</span>
-      </div>
-      <div class="card">
-        <div class="dash-controls">
-          <label>対象ジョブ
-            <select id="dash-job"><option value="">(全ジョブ)</option></select>
-          </label>
-          <label>時間粒度
-            <select id="dash-bucket">
-              <option value="minute">分</option>
-              <option value="hour" selected>時</option>
-              <option value="day">日</option>
-            </select>
-          </label>
-          <label class="row inline">
-            <input type="checkbox" id="dash-suppressed" /><span>抑制済みも含める</span>
-          </label>
-          <button id="dash-refresh">更新</button>
-        </div>
+        <span class="ti-text"><strong>調査したパソコン全体の「危険の様子」をまとめて表示します。</strong>
+          上から順に、いまの状況 → 最近の出来事 → よく出た手口 → 危険だったPC → 時間帯、で読めます。</span>
       </div>
 
-      <div class="kpi-row">
-        <div class="kpi"><span class="kpi-v" id="kpi-total">0</span><span class="kpi-l">検知総数</span></div>
-        <div class="kpi"><span class="kpi-v kpi-bad" id="kpi-crit">0</span><span class="kpi-l">Critical + High</span></div>
-        <div class="kpi"><span class="kpi-v" id="kpi-hosts">0</span><span class="kpi-l">影響ホスト数</span></div>
-        <div class="kpi"><span class="kpi-v" id="kpi-rules">0</span><span class="kpi-l">発火ルール種数</span></div>
+      <!-- ① いまの状況（ひとこと） -->
+      <div id="dash-summary" class="dash-summary">読込中…</div>
+
+      <!-- ② 重要度を信号色で（大きく） -->
+      <div class="sev-tiles">
+        <div class="sev-tile sev-critical"><div class="st-n" id="st-crit">0</div><div class="st-l">緊急<span>critical</span></div></div>
+        <div class="sev-tile sev-high"><div class="st-n" id="st-high">0</div><div class="st-l">高<span>high</span></div></div>
+        <div class="sev-tile sev-medium"><div class="st-n" id="st-med">0</div><div class="st-l">中<span>medium</span></div></div>
+        <div class="sev-tile sev-low"><div class="st-n" id="st-low">0</div><div class="st-l">低<span>low</span></div></div>
+      </div>
+      <div class="dash-mini muted small">
+        検知の合計 <b id="kpi-total">0</b> 件 ・ 調査したPC <b id="kpi-hosts">0</b> 台 ・ 異なる手口 <b id="kpi-rules">0</b> 種
+        <span class="dash-mini-ctrl">
+          <label>対象 <select id="dash-job"><option value="">全部</option></select></label>
+          <label>時間 <select id="dash-bucket">
+            <option value="minute">分</option><option value="hour" selected>時</option><option value="day">日</option>
+          </select></label>
+          <label class="row inline"><input type="checkbox" id="dash-suppressed" /><span>抑制も含む</span></label>
+          <button id="dash-refresh" class="ghost-btn small">↻ 更新</button>
+        </span>
       </div>
 
+      <!-- ③ 最近の重大な出来事 -->
       <div class="card">
-        <h2>🕒 最近の重大な出来事 <span class="muted small">いつ・どのPCで・何が起きたか（重大/高のみ）</span></h2>
+        <h2>🕒 最近の重大な出来事 <span class="muted small">いつ・どのPCで・何が（行をクリックで解説）</span></h2>
         <div id="recent-events" class="recent-events"></div>
       </div>
 
+      <!-- ④⑤ よく出た手口 / 危険だったPC -->
       <div class="dash-grid">
         <div class="card">
-          <h2>重要度内訳</h2>
-          <div id="chart-donut" class="chart-host"></div>
-          <div id="donut-legend" class="legend"></div>
-        </div>
-        <div class="card wide">
-          <h2>時系列 <span class="muted small" id="timeline-range"></span></h2>
-          <div id="chart-timeline" class="chart-host"></div>
-          <div class="legend" id="timeline-legend"></div>
-        </div>
-      </div>
-
-      <div class="dash-grid">
-        <div class="card">
-          <h2>多発ルール TOP12</h2>
+          <h2>⚠️ よく出た危険な手口</h2>
+          <div class="muted small">同じ攻撃手口が何回見つかったか（多い順）。</div>
           <div id="chart-rules" class="chart-host"></div>
         </div>
         <div class="card">
-          <h2>影響ホスト TOP10</h2>
+          <h2>💻 危険だったパソコン</h2>
+          <div class="muted small">検知が多かったPC（うち緊急+高の件数も表示）。</div>
           <div id="chart-hosts" class="chart-host"></div>
         </div>
       </div>
 
-      <div class="card anomalies-card">
-        <h2>検知パターン異常 <span class="muted small">(Sigma では書けない振舞いを自動抽出)</span></h2>
-        <div class="muted small">
-          バースト (平常比 N 倍)・拡散 (同ルールが複数ホスト同期発火)・沈黙
-          (常時活動ホストの無音区間)・時間外 (深夜帯の高重要度) を検知データから自動抽出。
-          各行クリックで該当条件のハント検索にジャンプします。
+      <!-- ⑥ いつ多かったか -->
+      <div class="card">
+        <h2>📈 いつ検知が多かったか <span class="muted small" id="timeline-range"></span></h2>
+        <div class="muted small">時間帯ごとの検知数（色は重要度）。</div>
+        <div id="chart-timeline" class="chart-host"></div>
+        <div class="legend" id="timeline-legend"></div>
+      </div>
+
+      <!-- ⑦ 高度な分析（折り畳み） -->
+      <details class="card anomalies-card">
+        <summary><b>🔬 高度な分析: 検知パターンの異常</b> <span class="muted small">(上級者向け・クリックで展開)</span></summary>
+        <div class="muted small" style="margin-top:8px">
+          バースト (平常比 N 倍)・拡散 (同ルールが複数PC同時)・沈黙 (常時活動PCの無音)・
+          時間外 (深夜帯の高重要度) を自動抽出。各行クリックでハント検索へジャンプ。
         </div>
         <table id="anomalies-table">
           <thead><tr>
@@ -358,7 +354,7 @@
           </tr></thead>
           <tbody></tbody>
         </table>
-      </div>
+      </details>
     </section>
 
     <!-- 結果 -->

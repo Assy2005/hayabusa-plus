@@ -2000,6 +2000,26 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
   }
 
+  // 「いまの状況」を一文で。最悪の重要度でトーン(色)を決める。
+  function renderDashSummary(d) {
+    const el = $("#dash-summary"); if (!el) return;
+    const bl = d.by_level || {};
+    const crit = bl.critical || 0, high = bl.high || 0, med = bl.medium || 0, low = bl.low || 0;
+    const hosts = (d.totals && d.totals.unique_computers) || 0;
+    const worst = (d.top_computers || []).slice()
+      .sort((a, b) => (b.sev_count || 0) - (a.sev_count || 0))[0];
+    let tone, msg;
+    if (crit > 0)      { tone = "crit"; msg = `🟥 <b>緊急レベルの危険</b>が <b>${crit.toLocaleString()}</b> 件 見つかりました。すぐ確認を。`; }
+    else if (high > 0) { tone = "high"; msg = `🟧 <b>高レベルの危険</b>が <b>${high.toLocaleString()}</b> 件 見つかりました。`; }
+    else if (med > 0)  { tone = "med";  msg = `🟨 中レベルの検知が <b>${med.toLocaleString()}</b> 件。緊急・高はありません。`; }
+    else if (low > 0)  { tone = "ok";   msg = `🟩 低レベルの検知のみ（${low.toLocaleString()} 件）。目立った危険はありません。`; }
+    else               { tone = "ok";   msg = `🟩 危険な検知は見つかっていません。`; }
+    const worstTxt = (worst && (worst.sev_count || 0) > 0)
+      ? ` 最も危険なPCは <b>${escapeHtml(worst.computer || "(不明)")}</b>。` : "";
+    el.className = "dash-summary tone-" + tone;
+    el.innerHTML = `🖥️ 調査したパソコン <b>${hosts.toLocaleString()}</b> 台。${msg}${worstTxt}`;
+  }
+
   async function loadDashboard() {
     await populateJobSelector();
     const job = $("#dash-job").value;
@@ -2013,13 +2033,17 @@ console.log("[app] app.js v2026-05-21-c executing");
     const d = await r.json();
 
     $("#kpi-total").textContent = d.totals.detections.toLocaleString();
-    $("#kpi-crit").textContent = d.totals.critical_high.toLocaleString();
     $("#kpi-hosts").textContent = d.totals.unique_computers.toLocaleString();
     $("#kpi-rules").textContent = d.totals.unique_rules.toLocaleString();
 
-    HayCharts.donut($("#chart-donut"), d.by_level);
-    HayCharts.legend($("#donut-legend"),
-      HayCharts.LEVEL_ORDER.filter(k => d.by_level[k]));
+    // 信号色タイル（重要度別の件数）
+    const bl = d.by_level || {};
+    const setN = (id, v) => { const e = $(id); if (e) e.textContent = (v || 0).toLocaleString(); };
+    setN("#st-crit", bl.critical); setN("#st-high", bl.high);
+    setN("#st-med", bl.medium);    setN("#st-low", bl.low);
+
+    // 状況ヒトコト
+    renderDashSummary(d);
 
     const levels = HayCharts.stackedBars($("#chart-timeline"), d.timeline);
     HayCharts.legend($("#timeline-legend"), levels);

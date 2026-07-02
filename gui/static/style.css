@@ -760,6 +760,36 @@ body.public-mode .pub-stats { display: block !important; }
 /* 展開された解説パネルはリスト幅いっぱいに */
 .recent-events .explain-row { width: 100%; }
 
+/* ===== 全体ビュー刷新: 状況ヒトコト + 信号色タイル ===== */
+.dash-summary {
+  border: 1px solid var(--line); border-left-width: 6px; border-radius: 10px;
+  padding: 14px 18px; font-size: 16px; color: var(--text); background: var(--panel);
+}
+.dash-summary b { font-weight: 800; }
+.dash-summary.tone-crit { border-left-color: var(--crit); background: linear-gradient(90deg,#FFE0DC,var(--panel) 60%); }
+.dash-summary.tone-high { border-left-color: var(--high); background: linear-gradient(90deg,#FFEDE3,var(--panel) 60%); }
+.dash-summary.tone-med  { border-left-color: var(--med);  background: linear-gradient(90deg,#FFF7DA,var(--panel) 60%); }
+.dash-summary.tone-ok   { border-left-color: var(--low, #3BA55D); background: linear-gradient(90deg,#E7F6EC,var(--panel) 60%); }
+
+.sev-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.sev-tile { border-radius: 12px; padding: 14px 8px; text-align: center; color: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.sev-tile .st-n { font-size: 30px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.sev-tile .st-l { font-size: 13px; font-weight: 700; }
+.sev-tile .st-l span { display: block; font-size: 10px; font-weight: 500; opacity: .8; }
+.sev-critical { background: var(--crit); }
+.sev-high     { background: var(--high); }
+.sev-medium   { background: var(--med); color:#3a2f00; }
+.sev-low      { background: var(--low, #3BA55D); }
+.sev-medium .st-l span { opacity: .7; }
+
+.dash-mini { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 2px 4px; }
+.dash-mini b { color: var(--text); font-variant-numeric: tabular-nums; }
+.dash-mini-ctrl { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dash-mini-ctrl label { display: flex; align-items: center; gap: 4px; }
+@media (max-width: 560px) { .sev-tiles { grid-template-columns: repeat(2, 1fr); }
+  .dash-mini-ctrl { margin-left: 0; } }
+
 .nickname-field { flex-direction: column; gap: 2px; align-items: flex-start; }
 .nickname-field input {
   padding: 7px 10px; border: 1px solid var(--line-strong);
