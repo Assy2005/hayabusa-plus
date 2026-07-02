@@ -722,8 +722,11 @@ class Store:
     # --- 誤検知(FP)対策のパラメータ (ranking のスコアにのみ影響) ---
     # 環境ノイズ自動割引: あるルールが参加PCの一定割合以上で発火したら、その
     # 環境では普通に起きる良性活動とみなしスコアから除外する。
-    AMBIENT_PC_FRACTION = 0.6   # 全PCの 60% 以上で出たら環境ノイズ扱い
-    AMBIENT_MIN_PCS = 3         # PC が少ないと誤って全部ノイズ化するので下限
+    #  ※ high にのみ適用。critical(=明らかな侵害) は決して自動割引しない。
+    #  ※ PC が少ないうちは「みんな似たログ」で本物まで消えるので、十分な
+    #    台数が集まってから & 高い割合でしか効かせない (厳しすぎ対策)。
+    AMBIENT_PC_FRACTION = 0.8   # 全PCの 80% 以上で出たら環境ノイズ扱い
+    AMBIENT_MIN_PCS = 8         # 8台以上集まるまでは自動割引を一切効かせない
 
     def _load_score_exclude(self) -> tuple[set[str], list[str]]:
         """FP多発ルールの除外リストを lookups/score_exclude.txt から読む。
@@ -936,15 +939,17 @@ class Store:
 
         def _counts(comp: str) -> tuple[int, int]:
             sets = per_comp.get(comp, {"critical": set(), "high": set()})
-            def keep(rid: str) -> bool:
-                if rid in ambient:
+            def keep(rid: str, *, allow_ambient: bool) -> bool:
+                # allow_ambient=False → この severity では環境ノイズ割引を効かせない
+                if allow_ambient and rid in ambient:
                     return False
                 if rid.lower() in excl_ids:
                     return False
                 t = (rule_title.get(rid) or "").lower()
                 return not any(term in t for term in excl_terms)
-            crit = sum(1 for rid in sets.get("critical", ()) if keep(rid))
-            high = sum(1 for rid in sets.get("high", ()) if keep(rid))
+            # critical は自動割引の対象外 (手動 exclude リストのみ効く)。
+            crit = sum(1 for rid in sets.get("critical", ()) if keep(rid, allow_ambient=False))
+            high = sum(1 for rid in sets.get("high", ()) if keep(rid, allow_ambient=True))
             return crit, high
 
         # 2. Display nickname = the label on that computer's latest job.
