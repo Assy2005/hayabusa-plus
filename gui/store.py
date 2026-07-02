@@ -719,6 +719,34 @@ class Store:
         "informational": 0.1,
     }
 
+    # --- 誤検知(FP)対策のパラメータ (ranking のスコアにのみ影響) ---
+    # 環境ノイズ自動割引: あるルールが参加PCの一定割合以上で発火したら、その
+    # 環境では普通に起きる良性活動とみなしスコアから除外する。
+    AMBIENT_PC_FRACTION = 0.6   # 全PCの 60% 以上で出たら環境ノイズ扱い
+    AMBIENT_MIN_PCS = 3         # PC が少ないと誤って全部ノイズ化するので下限
+
+    def _load_score_exclude(self) -> tuple[set[str], list[str]]:
+        """FP多発ルールの除外リストを lookups/score_exclude.txt から読む。
+
+        各行は rule_id 完全一致、または rule_title の部分一致キーワード。
+        '#' 始まりと空行は無視。戻り値 = (rule_id集合(小文字), タイトル語リスト(小文字))。
+        """
+        path = Path(__file__).resolve().parent.parent / "lookups" / "score_exclude.txt"
+        ids: set[str] = set()
+        terms: list[str] = []
+        try:
+            for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                s = raw.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if s.lower().startswith("id:"):
+                    ids.add(s[3:].strip().lower())
+                else:
+                    terms.append(s.lower())
+        except OSError:
+            pass
+        return ids, terms
+
     def host_summary(self, include_suppressed: bool = False) -> list[dict]:
         """One row per `computer` with detection counts + risk score."""
         join = self._SUPP_JOIN
@@ -874,6 +902,51 @@ class Store:
             "GROUP BY d.computer ORDER BY total DESC")
         rows = [dict(r) for r in c.execute(sql, params)]
 
+        # 1b. False-positive suppression for SCORING (detections still shown).
+        #     Collect the distinct critical/high (computer, rule) pairs, then
+        #     drop rules that are either (a)環境ノイズ = fired on a large share
+        #     of PCs, or (b) on the curated FP-prone exclude list. The remaining
+        #     distinct rule counts feed the score.
+        ch_where = f" WHERE d.job_id IN ({ph}) AND d.level IN ('critical','high')"
+        if not include_suppressed:
+            ch_where += " AND s.id IS NULL"
+        per_comp: dict[str, dict[str, set]] = {}
+        rule_pcs: dict[str, set] = {}
+        rule_title: dict[str, str] = {}
+        for r in c.execute(
+            "SELECT DISTINCT d.computer AS computer, d.level AS level, "
+            "       d.rule_id AS rule_id, d.rule_title AS title "
+            "FROM detections d " + self._SUPP_JOIN + ch_where, list(job_ids)):
+            comp = r["computer"] or "(不明)"
+            rid = r["rule_id"]
+            if not rid:
+                continue
+            per_comp.setdefault(comp, {"critical": set(), "high": set()})
+            per_comp[comp].setdefault(r["level"], set()).add(rid)
+            rule_pcs.setdefault(rid, set()).add(comp)
+            rule_title[rid] = r["title"] or ""
+
+        import math
+        total_pcs = len(per_comp) or len(rows)
+        ambient: set[str] = set()
+        if total_pcs >= self.AMBIENT_MIN_PCS:
+            need = max(2, math.ceil(self.AMBIENT_PC_FRACTION * total_pcs))
+            ambient = {rid for rid, comps in rule_pcs.items() if len(comps) >= need}
+        excl_ids, excl_terms = self._load_score_exclude()
+
+        def _counts(comp: str) -> tuple[int, int]:
+            sets = per_comp.get(comp, {"critical": set(), "high": set()})
+            def keep(rid: str) -> bool:
+                if rid in ambient:
+                    return False
+                if rid.lower() in excl_ids:
+                    return False
+                t = (rule_title.get(rid) or "").lower()
+                return not any(term in t for term in excl_terms)
+            crit = sum(1 for rid in sets.get("critical", ()) if keep(rid))
+            high = sum(1 for rid in sets.get("high", ()) if keep(rid))
+            return crit, high
+
         # 2. Display nickname = the label on that computer's latest job.
         nick_by_job: dict[str, str] = {}
         for row in c.execute(
@@ -886,6 +959,8 @@ class Store:
             nick = nick_by_job.get(jid)
             r["name"] = nick or comp or "(不明)"
             r["is_named"] = 1 if nick else 0
+            # FP を除いた distinct rule 数でスコア (crit_rules/high_rules を上書き)
+            r["crit_rules"], r["high_rules"] = _counts(comp)
             r["risk_score"] = self._risk_score(r)
         rows.sort(key=lambda r: r["risk_score"], reverse=True)
         for i, r in enumerate(rows, start=1):
