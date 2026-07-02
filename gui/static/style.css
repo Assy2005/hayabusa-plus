@@ -790,6 +790,18 @@ body.public-mode .pub-stats { display: block !important; }
 @media (max-width: 560px) { .sev-tiles { grid-template-columns: repeat(2, 1fr); }
   .dash-mini-ctrl { margin-left: 0; } }
 
+/* 解説パネル: 検知したログの中身 */
+.explain-log { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.explain-log h4 { margin: 0 0 6px; font-size: 13px; }
+.explain-log-meta { margin-bottom: 6px; }
+.explain-log .kv-lines { background: var(--panel-3, rgba(0,0,0,.03)); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 1.6;
+  max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.explain-log .kv-lines > div { padding: 1px 0; }
+.explain-log-raw { margin-top: 6px; }
+.explain-log-raw > summary { cursor: pointer; }
+.explain-log-raw .kv-lines { margin-top: 6px; font-family: var(--mono, monospace); }
+
 .nickname-field { flex-direction: column; gap: 2px; align-items: flex-start; }
 .nickname-field input {
   padding: 7px 10px; border: 1px solid var(--line-strong);

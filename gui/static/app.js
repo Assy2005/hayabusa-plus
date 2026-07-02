@@ -953,12 +953,33 @@ console.log("[app] app.js v2026-05-21-c executing");
             <ol>${steps.map(s => `<li>${s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`).join("")}</ol>
           </div>
         </div>
+        <div class="explain-log">
+          <h4>📄 検知したログの中身 <span class="muted small">このルールに引っかかった実際のログ</span></h4>
+          <div class="explain-log-meta muted small">
+            チャネル: <code>${escapeHtml(ev.Channel || "—")}</code>
+            &nbsp;・&nbsp; EventID: <b>${escapeHtml(String(ev.EventID != null ? ev.EventID : "—"))}</b>
+            ${ev.RecordID != null ? `&nbsp;・&nbsp; RecordID: ${escapeHtml(String(ev.RecordID))}` : ""}
+          </div>
+          <div class="explain-log-details kv-lines"></div>
+          ${ev.ExtraFieldInfo != null
+            ? `<details class="explain-log-raw"><summary class="muted small">生イベントデータ (ExtraFieldInfo)</summary><div class="explain-log-extra kv-lines"></div></details>`
+            : ""}
+        </div>
         <div class="explain-foot muted small">
           ${ruleFile ? "ルールファイル: <code>" + escapeHtml(ruleFile) + "</code>" : ""}
           &nbsp; &nbsp;
           <a href="#" data-job="${jobId}" data-line="${lineNo}" class="open-in-results">結果タブで詳細を見る →</a>
         </div>
       </div>`;
+
+    // 検知したログの中身を描画 (Hayabusa の Details / ExtraFieldInfo を再利用)。
+    const logHost = explain.querySelector(".explain-log-details");
+    if (logHost) {
+      const has = renderDetailsString(logHost, ev.Details);
+      if (!has) logHost.innerHTML = `<span class="muted small">（このログには追加の詳細フィールドがありません）</span>`;
+    }
+    const extraHost = explain.querySelector(".explain-log-extra");
+    if (extraHost) renderDetailsString(extraHost, ev.ExtraFieldInfo);
 
     // Wire the "open in results tab" link to actually navigate + select.
     const link = explain.querySelector(".open-in-results");
