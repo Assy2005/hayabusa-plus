@@ -741,6 +741,20 @@ body.public-mode .pub-stats { display: block !important; }
 .ps-tech-pcs { flex: 0 0 auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 @media (max-width: 560px) { .ps-tiles { grid-template-columns: repeat(2, 1fr); } }
 
+/* ダッシュボード: 最近の重大な出来事 (いつ・どこで・何が) */
+.recent-events { display: flex; flex-direction: column; }
+.re-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px;
+  border-top: 1px dashed var(--line); font-size: 13px; }
+.re-row:first-child { border-top: none; }
+.re-time { flex: 0 0 auto; width: 88px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.re-row .lvl { flex: 0 0 auto; min-width: 40px; text-align: center; }
+.re-pc { flex: 0 0 auto; max-width: 220px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.re-what { flex: 1 1 auto; min-width: 0; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.re-meta { color: var(--muted-2); font-size: 11px; }
+@media (max-width: 640px) { .re-pc { max-width: 120px; } }
+
 .nickname-field { flex-direction: column; gap: 2px; align-items: flex-start; }
 .nickname-field input {
   padding: 7px 10px; border: 1px solid var(--line-strong);

@@ -2042,10 +2042,58 @@ console.log("[app] app.js v2026-05-21-c executing");
       count: c.n,
     })));
 
+    // 「いつ・どこで・何が」を一目で: 最近の重大イベント一覧。
+    loadRecentEvents();
+
     // Run the anomaly analyser. It can be slow on huge corpora (it walks
     // the whole detection table) so fire it asynchronously without
     // blocking the rest of the dashboard render.
     loadAnomalies();
+  }
+
+  // ISO/hayabusa のタイムスタンプを "MM/DD HH:MM" に整形 (失敗時は先頭16文字)。
+  function fmtWhen(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts);
+    if (!isNaN(d)) {
+      const p = n => String(n).padStart(2, "0");
+      return `${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    return String(ts).replace("T", " ").slice(0, 16);
+  }
+
+  async function loadRecentEvents() {
+    const host = $("#recent-events"); if (!host) return;
+    const job = $("#dash-job")?.value;
+    const incSup = $("#dash-suppressed")?.checked;
+    const qs = new URLSearchParams();
+    qs.set("level", "critical"); qs.append("level", "high");
+    qs.set("order", "ts_desc"); qs.set("limit", "15");
+    if (job) qs.set("job", job);
+    if (incSup) qs.set("include_suppressed", "1");
+    host.innerHTML = `<div class="muted small" style="padding:8px 2px">読込中…</div>`;
+    try {
+      const r = await fetch("/api/hunt/search?" + qs.toString());
+      const d = await r.json();
+      const evs = d.detections || [];
+      if (!evs.length) {
+        host.innerHTML = `<div class="muted small" style="padding:8px 2px">まだ重大な出来事（critical / high）はありません。</div>`;
+        return;
+      }
+      host.innerHTML = evs.map(ev => {
+        const lv = ((ev.Level || "").toLowerCase().match(/[a-z]+/) || ["info"])[0];
+        const ja = LEVEL_JA[lv] || ev.Level || "";
+        const meta = [ev.Channel, ev.EventID].filter(Boolean).join(" · ");
+        return `<div class="re-row">
+          <span class="re-time">${escapeHtml(fmtWhen(ev.Timestamp))}</span>
+          <span class="lvl lvl-${escapeHtml(lv)}">${escapeHtml(ja)}</span>
+          <span class="re-pc" title="${escapeHtml(ev.Computer || "")}">💻 ${escapeHtml(ev.Computer || "(不明)")}</span>
+          <span class="re-what">${escapeHtml(ev.RuleTitle || ev.Title || "(不明)")}${meta ? ` <span class="re-meta">${escapeHtml(meta)}</span>` : ""}</span>
+        </div>`;
+      }).join("");
+    } catch (e) {
+      host.innerHTML = `<div class="muted small" style="padding:8px 2px">取得に失敗しました</div>`;
+    }
   }
 
   async function loadAnomalies() {
