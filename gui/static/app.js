@@ -2080,17 +2080,29 @@ console.log("[app] app.js v2026-05-21-c executing");
         host.innerHTML = `<div class="muted small" style="padding:8px 2px">まだ重大な出来事（critical / high）はありません。</div>`;
         return;
       }
-      host.innerHTML = evs.map(ev => {
+      host.innerHTML = evs.map((ev, i) => {
         const lv = ((ev.Level || "").toLowerCase().match(/[a-z]+/) || ["info"])[0];
         const ja = LEVEL_JA[lv] || ev.Level || "";
         const meta = [ev.Channel, ev.EventID].filter(Boolean).join(" · ");
-        return `<div class="re-row">
+        return `<div class="re-row clickable" data-i="${i}" role="button" tabindex="0"
+                     title="クリックで解説（なにを検知したか）を表示">
           <span class="re-time">${escapeHtml(fmtWhen(ev.Timestamp))}</span>
           <span class="lvl lvl-${escapeHtml(lv)}">${escapeHtml(ja)}</span>
           <span class="re-pc" title="${escapeHtml(ev.Computer || "")}">💻 ${escapeHtml(ev.Computer || "(不明)")}</span>
           <span class="re-what">${escapeHtml(ev.RuleTitle || ev.Title || "(不明)")}${meta ? ` <span class="re-meta">${escapeHtml(meta)}</span>` : ""}</span>
+          <span class="re-caret">▾</span>
         </div>`;
       }).join("");
+      // 各行に detection を紐付け、クリックで既存の解説パネルを展開する。
+      host.querySelectorAll(".re-row").forEach(rowEl => {
+        const ev = evs[Number(rowEl.dataset.i)];
+        rowEl.dataset.jobId = ev._job_id || "";
+        rowEl.dataset.lineNo = (ev._line_no != null ? ev._line_no : "");
+        rowEl.addEventListener("click", () => toggleExplain(rowEl, ev));
+        rowEl.addEventListener("keydown", e => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExplain(rowEl, ev); }
+        });
+      });
     } catch (e) {
       host.innerHTML = `<div class="muted small" style="padding:8px 2px">取得に失敗しました</div>`;
     }

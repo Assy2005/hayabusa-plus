@@ -754,6 +754,11 @@ body.public-mode .pub-stats { display: block !important; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .re-meta { color: var(--muted-2); font-size: 11px; }
 @media (max-width: 640px) { .re-pc { max-width: 120px; } }
+.re-row.clickable { cursor: pointer; border-radius: 6px; }
+.re-row.clickable:hover { background: var(--panel-3, rgba(0,0,0,.03)); }
+.re-row .re-caret { flex: 0 0 auto; margin-left: auto; color: var(--muted-2); font-size: 12px; }
+/* 展開された解説パネルはリスト幅いっぱいに */
+.recent-events .explain-row { width: 100%; }
 
 .nickname-field { flex-direction: column; gap: 2px; align-items: flex-start; }
 .nickname-field input {
