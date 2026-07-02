@@ -2021,6 +2021,22 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
   }
 
+  async function populateComputerSelector() {
+    const sel = $("#dash-computer"); if (!sel) return;
+    const current = sel.value;
+    try {
+      const r = await fetch("/api/hunt/facets");
+      const f = await r.json();
+      sel.innerHTML = `<option value="">全部</option>`;
+      (f.computers || []).forEach(c => {
+        const o = document.createElement("option");
+        o.value = c.name; o.textContent = `${c.name} (${c.count})`;
+        sel.appendChild(o);
+      });
+      if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+    } catch (e) { /* facets 取得失敗時は「全部」のまま */ }
+  }
+
   // 「いまの状況」を一文で。最悪の重要度でトーン(色)を決める。
   function renderDashSummary(d) {
     const el = $("#dash-summary"); if (!el) return;
@@ -2043,11 +2059,14 @@ console.log("[app] app.js v2026-05-21-c executing");
 
   async function loadDashboard() {
     await populateJobSelector();
+    await populateComputerSelector();
     const job = $("#dash-job").value;
+    const computer = $("#dash-computer")?.value || "";
     const bucket = $("#dash-bucket").value;
     const incSup = $("#dash-suppressed").checked;
     const qs = new URLSearchParams();
     if (job) qs.set("job", job);
+    if (computer) qs.set("computer", computer);
     qs.set("bucket", bucket);
     if (incSup) qs.set("include_suppressed", "1");
     const r = await fetch(`/api/stats?${qs}`);
@@ -2110,11 +2129,13 @@ console.log("[app] app.js v2026-05-21-c executing");
   async function loadRecentEvents() {
     const host = $("#recent-events"); if (!host) return;
     const job = $("#dash-job")?.value;
+    const computer = $("#dash-computer")?.value || "";
     const incSup = $("#dash-suppressed")?.checked;
     const qs = new URLSearchParams();
     qs.set("level", "critical"); qs.append("level", "high");
     qs.set("order", "ts_desc"); qs.set("limit", "15");
     if (job) qs.set("job", job);
+    if (computer) qs.set("computer", computer);
     if (incSup) qs.set("include_suppressed", "1");
     host.innerHTML = `<div class="muted small" style="padding:8px 2px">読込中…</div>`;
     try {
@@ -2251,6 +2272,7 @@ console.log("[app] app.js v2026-05-21-c executing");
   $("#dash-refresh").onclick = loadDashboard;
   $("#dash-job").onchange = loadDashboard;
   $("#dash-bucket").onchange = loadDashboard;
+  { const dc = $("#dash-computer"); if (dc) dc.onchange = loadDashboard; }
   $("#dash-suppressed").onchange = loadDashboard;
   // Recompute bar widths if the panel resizes (e.g. window resize while open).
   window.addEventListener("resize", () => {

@@ -1347,26 +1347,27 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/stats":
             qs = parse_qs(u.query)
             job_id = qs.get("job", [""])[0] or None
+            computer = qs.get("computer", [""])[0] or None
             include_suppressed = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
             bucket = qs.get("bucket", ["hour"])[0]
             if bucket not in ("minute", "hour", "day"):
                 bucket = "hour"
-            by_level = STORE.stats_by_level(job_id, include_suppressed)
+            by_level = STORE.stats_by_level(job_id, include_suppressed, computer)
             total = sum(by_level.values())
             crit_high = by_level.get("critical", 0) + by_level.get("high", 0)
             self._send_json({
-                "scope": {"job_id": job_id, "include_suppressed": include_suppressed,
-                          "bucket": bucket},
+                "scope": {"job_id": job_id, "computer": computer,
+                          "include_suppressed": include_suppressed, "bucket": bucket},
                 "totals": {
                     "detections": total,
                     "critical_high": crit_high,
-                    "unique_computers": STORE.stats_unique("computer", job_id, include_suppressed),
-                    "unique_rules": STORE.stats_unique("rule_id", job_id, include_suppressed),
+                    "unique_computers": STORE.stats_unique("computer", job_id, include_suppressed, computer),
+                    "unique_rules": STORE.stats_unique("rule_id", job_id, include_suppressed, computer),
                 },
                 "by_level": by_level,
-                "top_rules": STORE.stats_top_rules(job_id, 12, include_suppressed),
-                "top_computers": STORE.stats_top_computers(job_id, 10, include_suppressed),
-                "timeline": STORE.stats_timeline(job_id, bucket, include_suppressed),
+                "top_rules": STORE.stats_top_rules(job_id, 12, include_suppressed, computer),
+                "top_computers": STORE.stats_top_computers(job_id, 10, include_suppressed, computer),
+                "timeline": STORE.stats_timeline(job_id, bucket, include_suppressed, computer),
             })
             return
 

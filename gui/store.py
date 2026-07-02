@@ -533,25 +533,29 @@ class Store:
 
     # ----------------------------------------------------------- statistics
 
-    def _stats_where(self, job_id: str | None, include_suppressed: bool):
+    def _stats_where(self, job_id: str | None, include_suppressed: bool,
+                     computer: str | None = None):
         clauses, params = ["1=1"], []
         if job_id:
             clauses.append("d.job_id = ?")
             params.append(job_id)
+        if computer:
+            clauses.append("d.computer = ?")
+            params.append(computer)
         join = self._SUPP_JOIN
         if not include_suppressed:
             clauses.append("s.id IS NULL")
         return join, " AND ".join(clauses), params
 
-    def stats_by_level(self, job_id=None, include_suppressed=False) -> dict[str, int]:
-        join, where, params = self._stats_where(job_id, include_suppressed)
+    def stats_by_level(self, job_id=None, include_suppressed=False, computer=None) -> dict[str, int]:
+        join, where, params = self._stats_where(job_id, include_suppressed, computer)
         rows = self._conn().execute(
             f"SELECT d.level AS k, COUNT(DISTINCT d.job_id || ':' || d.line_no) AS n "
             f"FROM detections d{join} WHERE {where} GROUP BY d.level", params)
         return {row["k"] or "unknown": row["n"] for row in rows}
 
-    def stats_top_rules(self, job_id=None, limit=10, include_suppressed=False):
-        join, where, params = self._stats_where(job_id, include_suppressed)
+    def stats_top_rules(self, job_id=None, limit=10, include_suppressed=False, computer=None):
+        join, where, params = self._stats_where(job_id, include_suppressed, computer)
         sql = (f"SELECT d.rule_id, d.rule_title, d.level, "
                f"       COUNT(DISTINCT d.job_id || ':' || d.line_no) AS n "
                f"FROM detections d{join} WHERE {where} "
@@ -559,8 +563,8 @@ class Store:
         params = [*params, limit]
         return [dict(r) for r in self._conn().execute(sql, params)]
 
-    def stats_top_computers(self, job_id=None, limit=10, include_suppressed=False):
-        join, where, params = self._stats_where(job_id, include_suppressed)
+    def stats_top_computers(self, job_id=None, limit=10, include_suppressed=False, computer=None):
+        join, where, params = self._stats_where(job_id, include_suppressed, computer)
         sql = (f"SELECT d.computer, "
                f"       COUNT(DISTINCT d.job_id || ':' || d.line_no) AS n, "
                f"       SUM(CASE WHEN d.level IN ('critical','high') THEN 1 ELSE 0 END) AS sev_count "
@@ -569,11 +573,11 @@ class Store:
         params = [*params, limit]
         return [dict(r) for r in self._conn().execute(sql, params)]
 
-    def stats_unique(self, field: str, job_id=None, include_suppressed=False) -> int:
+    def stats_unique(self, field: str, job_id=None, include_suppressed=False, computer=None) -> int:
         """Cardinality of a column ('computer', 'rule_id', etc.)."""
         if field not in ("computer", "rule_id", "channel"):
             raise ValueError(f"unsupported field: {field}")
-        join, where, params = self._stats_where(job_id, include_suppressed)
+        join, where, params = self._stats_where(job_id, include_suppressed, computer)
         return self._conn().execute(
             f"SELECT COUNT(DISTINCT d.{field}) AS n FROM detections d{join} "
             f"WHERE {where}", params).fetchone()["n"]
@@ -672,7 +676,7 @@ class Store:
         except ValueError as exc:
             raise ValueError(f"unparsable timestamp: {ts!r}") from exc
 
-    def stats_timeline(self, job_id=None, bucket="hour", include_suppressed=False):
+    def stats_timeline(self, job_id=None, bucket="hour", include_suppressed=False, computer=None):
         """
         Bucket detections by time for the time-series chart.
 
