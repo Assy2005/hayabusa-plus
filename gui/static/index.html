@@ -629,11 +629,10 @@
         <div class="hosts-head">
           <h2>ホスト資産</h2>
           <div class="muted small">
-            検知データから自動生成。リスクスコアは重大度ごとの
-            <b>異なる検知ルール数</b>から算出
-            <code>critical×30 + high×12 + medium×2(上限) + low×0.5(上限)</code>。
-            件数やログ量ではなく <b>critical・high の手口の幅</b>を重視し、TP/FP と
-            直近度補正を掛けて 0–100。
+            検知データから自動生成。リスクスコアは
+            <b>critical・high の異なる検知ルール数だけ</b>から算出
+            <code>critical×30 + high×12</code>。medium・low や活動量（ログの多さ）では
+            上がりません。TP/FP と直近度補正を掛けて 0–100。
           </div>
           <div>
             <label class="row inline"><input type="checkbox" id="hosts-include-suppressed" />
@@ -688,10 +687,10 @@
           <h2>危険度ランキング <span class="muted small" id="ranking-count"></span></h2>
           <button id="ranking-refresh" class="ghost-btn small">↻ 更新</button>
         </div>
-        <p class="muted small">スコア = <b>明らかな侵害</b>の重さ（0–100）。重大度ごとの
-          <b>“異なる検知ルール”の数</b>で計算します（critical +30 / high +12 /
-          medium +2・上限あり / low +0.5・上限あり）。ログ量や同じ警告の繰り返しでは上がらず、
-          <b>critical・high の手口が出るほど</b>高くなります。</p>
+        <p class="muted small">スコア = <b>明らかな侵害</b>の重さ（0–100）。
+          <b>critical・high の“異なる手口の数”だけ</b>で計算します（critical +30 / high +12）。
+          medium・low や活動量（ログの多さ・同じ警告の繰り返し）ではスコアは上がりません。
+          <b>危険な手口（critical・high）が出るほど</b>高くなります。</p>
         <div id="ranking-list" class="ranking-list"></div>
       </div>
     </section>

@@ -892,32 +892,24 @@ class Store:
     def _risk_score(cls, row: dict) -> float:
         """0–100 "obvious compromise" score.
 
-        Driven by the number of DISTINCT high-severity rules/techniques seen —
-        NOT raw event volume. Rationale: medium-level rules are noisy and scale
-        with how much log you feed in, so a weighted *count* let a big, benign
-        log out-score a genuinely compromised host. Counting distinct rules
-        per severity and weighting critical/high heavily fixes that:
+        Scored ONLY on the number of DISTINCT critical/high rules (techniques)
+        seen. medium/low are intentionally excluded so a PC's overall *activity
+        level* can't move the score: a busy-but-clean machine fires lots of
+        different medium/low rules through normal use, which would otherwise
+        give it a free head-start over an idle machine. Only genuine
+        high-severity techniques count.
 
-          * critical  : +30 each  (a single critical ≈ clear compromise)
-          * high      : +12 each
-          * medium    :  +2 each, capped at 8 distinct rules (max +16)
-          * low       : +0.5 each, capped at 5 (max +2.5)
+          * critical : +30 each  (a single critical ≈ clear compromise)
+          * high     : +12 each
+          * medium/low: 0 (shown as counts only, never scored)
 
-        So a host with zero critical/high stays low (≤ ~19) no matter how many
-        medium events it produces, while a couple of critical techniques put it
-        near the top. Same TP/FP and recency modifiers as before; linearly
-        clipped to 100 (no log-compression — keeps the high end spread out).
+        A PC with no critical/high therefore scores ~0 regardless of how much
+        log/medium noise it has. Same TP/FP and recency modifiers; linearly
+        clipped to 100.
         """
         crit = row.get("crit_rules", 0) or 0
         high = row.get("high_rules", 0) or 0
-        med = row.get("medium_rules", 0) or 0
-        low = row.get("low_rules", 0) or 0
-        points = (
-            crit * 30.0
-            + high * 12.0
-            + min(med, 8) * 2.0
-            + min(low, 5) * 0.5
-        )
+        points = crit * 30.0 + high * 12.0
 
         # TP/FP feedback adjustment. Symmetric: confirmed TPs raise, confirmed
         # FPs lower. Bounded.
