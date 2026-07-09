@@ -43,6 +43,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (name === "hunt") initHunt();
     if (name === "hosts") loadHosts();
     if (name === "ranking") loadRanking();
+    if (name === "proctree") initProcessTree();
   }
   $$(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
 
@@ -2508,15 +2509,27 @@ console.log("[app] app.js v2026-05-21-c executing");
   // 攻撃のキルチェーン図。侵害が疑われる (crit/high がある) 場合のみ、
   // 検知した手口を ATT&CK の段階順 (初期侵入→…→影響) に左から右へ並べ、
   // 「攻撃がどう進んだか」を1枚で見せる。攻撃が無ければ何も描かない。
-  function renderKillChain(story) {
+  // mode: "stage" = ATT&CK 段階順（教科書的）, "time" = 実際の時刻順。
+  function renderKillChain(story, mode) {
     if (!story || !story.compromised || !(story.stages || []).length) return "";
-    const stageHtml = story.stages.map((s, idx) => {
+    mode = mode === "time" ? "time" : "stage";
+    // 時系列順のときは stage を最初の時刻で並べ替える。
+    const stages = story.stages.slice();
+    if (mode === "time") {
+      stages.sort((a, b) => String(a.first || "~").localeCompare(String(b.first || "~")));
+    }
+    const stageHtml = stages.map((s, idx) => {
       const techs = (s.techniques || []).map(t => {
         const lv = (t.level || "").toLowerCase();
         const hc = t.high_confidence
           ? `<span class="kc-hc" title="実際の攻撃で確認された手口">☣</span>` : "";
         const ids = (t.techniques || []).length
           ? `<span class="kc-ids">${escapeHtml(t.techniques.join(", "))}</span>` : "";
+        const when = t.first
+          ? `<div class="kc-when" title="最初に記録された時刻">🕒 ${escapeHtml(fmtWhen(t.first))}</div>` : "";
+        // 「誰が・何で・何をした」の平易な日本語説明
+        const narr = t.narrative
+          ? `<div class="kc-narr">${escapeHtml(t.narrative)}</div>` : "";
         // 「何が実行したか」= 実行プログラム / ユーザー
         const progs = (t.programs || []).filter(Boolean);
         const progHtml = progs.length
@@ -2526,23 +2539,49 @@ console.log("[app] app.js v2026-05-21-c executing");
           ? `<div class="kc-user" title="実行ユーザー">👤 ${users.map(u => escapeHtml(u)).join(", ")}</div>` : "";
         return `<div class="kc-tech kc-${escapeHtml(lv)}">
             ${hc}<span class="kc-tt">${escapeHtml(t.title)}</span>${ids}
-            ${progHtml}${userHtml}
+            ${when}${narr}${progHtml}${userHtml}
           </div>`;
       }).join("");
-      const arrow = idx < story.stages.length - 1
+      const arrow = idx < stages.length - 1
         ? `<div class="kc-arrow" aria-hidden="true">➜</div>` : "";
+      const stageWhen = (mode === "time" && s.first)
+        ? ` <span class="kc-stage-when">🕒 ${escapeHtml(fmtWhen(s.first))}</span>` : "";
       return `<div class="kc-stage${s.hc ? " kc-stage-hc" : ""}">
-          <div class="kc-stage-head"><span class="kc-num">${s.order}</span> ${escapeHtml(s.tactic_ja)}</div>
+          <div class="kc-stage-head"><span class="kc-num">${s.order}</span> ${escapeHtml(s.tactic_ja)}${stageWhen}</div>
           <div class="kc-techs">${techs}</div>
         </div>${arrow}`;
     }).join("");
     const hcBadge = story.hc_total
       ? `<span class="kc-hc-badge">☣ 実攻撃で確認された手口 ${story.hc_total} 件</span>` : "";
-    return `<div class="killchain">
-        <div class="kc-title">🧬 攻撃の流れ（ATT&amp;CK キルチェーン） ${hcBadge}
-          <span class="muted small">— 検知した手口を攻撃の段階順に並べています</span></div>
+    // 並び順の意味を明記（「時系列が本当か」を検証できるように）。
+    const orderNote = mode === "stage"
+      ? "並び順 = 攻撃の<b>段階</b>（ATT&amp;CK の教科書的な順序）。実際の時刻は各手口の 🕒 で確認できます。"
+      : "並び順 = <b>実際に記録された時刻</b>の順。これが本当の攻撃の流れです。";
+    const matchNote = (story.timeline_matches_stage_order === false)
+      ? `<div class="kc-warn">⚠ 実際の時刻の順序は、教科書的な段階順とは<b>一致していません</b>（🕒 の時刻で並びを確認してください）。</div>`
+      : "";
+    const toggle = `<button type="button" class="btn btn-ghost small kc-sort-toggle"
+        data-mode="${mode}">${mode === "stage" ? "🕒 時系列順で見る" : "🧭 段階順で見る"}</button>`;
+    return `<div class="killchain" data-mode="${mode}">
+        <div class="kc-title">🧬 攻撃の流れ（ATT&amp;CK キルチェーン） ${hcBadge} ${toggle}</div>
+        <div class="kc-ordernote muted small">${orderNote}</div>
+        ${matchNote}
         <div class="kc-flow">${stageHtml}</div>
       </div>`;
+  }
+
+  // キルチェーンの並び替えトグル。押すたびに段階順 ⇄ 時系列順を切り替える。
+  function wireKillChainToggle(scope, story) {
+    const btn = scope.querySelector(".kc-sort-toggle");
+    if (!btn) return;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const kc = scope.querySelector(".killchain");
+      if (!kc) return;
+      const next = kc.dataset.mode === "time" ? "stage" : "time";
+      kc.outerHTML = renderKillChain(story, next);
+      wireKillChainToggle(scope, story);   // 再描画後に再配線
+    });
   }
 
   async function toggleRankingDetail(item) {
@@ -2596,13 +2635,15 @@ console.log("[app] app.js v2026-05-21-c executing");
         ? `<div class="rd-chans">記録源: ${chans.map(c => `${escapeHtml(c.channel)} (${c.n})`).join(" ・ ")}</div>`
         : "";
       panel.innerHTML = `<div class="rank-detail-inner">
-          ${renderKillChain(story)}
+          ${renderKillChain(story, "stage")}
           <div class="rd-head">このパソコンで見つかった“あやしい動き” 上位 ${rules.length} 件 <span class="muted small">— 各行に「なにをする手口か」を表示</span></div>
           ${ruleRows}
           ${chanLine}
           <div class="rd-note">数字は当てはまった回数です（回数はスコアに影響しません）。スコアは <b>緊急/高 の“異なる手口の数”</b>で決まり、<b>☣ 実攻撃で確認された手口</b>は特に重く数えます。</div>
         </div>`;
       panel.dataset.loaded = "1";
+      // キルチェーンの「段階順 ⇄ 時系列順」トグルを配線。
+      wireKillChainToggle(panel, story);
     } catch (e) {
       panel.innerHTML = `<div class="muted small" style="padding:10px 14px">取得に失敗: ${escapeHtml(String(e))}</div>`;
     }
@@ -2622,6 +2663,100 @@ console.log("[app] app.js v2026-05-21-c executing");
       });
   } }
   { const _rb = $("#ranking-refresh"); if (_rb) _rb.onclick = loadRanking; }
+
+  // -------- プロセスツリー タブ --------
+  let _proctreeInited = false;
+  async function initProcessTree() {
+    const sel = $("#proctree-computer");
+    if (sel && !_proctreeInited) {
+      _proctreeInited = true;
+      // PC 一覧を用意（危険なPCを上に）。
+      try {
+        const r = await fetch("/api/ranking");
+        const j = await r.json();
+        const rows = Array.isArray(j) ? j : (j.ranking || []);
+        const seen = new Set();
+        rows.forEach(x => {
+          const c = x.computer || "";
+          if (!c || seen.has(c)) return;
+          seen.add(c);
+          const o = document.createElement("option");
+          o.value = c; o.textContent = x.name && x.name !== c ? `${x.name}（${c}）` : c;
+          sel.appendChild(o);
+        });
+        // 先頭のPCを自動選択。
+        if (sel.options.length > 1) { sel.selectedIndex = 1; }
+      } catch (e) {}
+      sel.onchange = loadProcessTree;
+      const rb = $("#proctree-refresh"); if (rb) rb.onclick = loadProcessTree;
+      const sp = $("#proctree-suppressed"); if (sp) sp.onchange = loadProcessTree;
+    }
+    loadProcessTree();
+  }
+
+  async function loadProcessTree() {
+    const host = $("#proctree-host"); if (!host) return;
+    const comp = $("#proctree-computer")?.value || "";
+    const cnt = $("#proctree-count");
+    if (!comp) {
+      host.innerHTML = `<div class="empty-state"><div class="icon">🌳</div>
+        <div class="title">PC を選んでください</div>
+        上の「PC」から対象のパソコンを選ぶと、プロセスの親子ツリーを表示します。</div>`;
+      if (cnt) cnt.textContent = "";
+      return;
+    }
+    host.innerHTML = `<div class="muted small" style="padding:10px">読込中…</div>`;
+    const qs = new URLSearchParams();
+    if ($("#proctree-suppressed")?.checked) qs.set("include_suppressed", "1");
+    let d;
+    try {
+      const r = await fetch(`/api/hosts/${encodeURIComponent(comp)}/process_tree?${qs}`);
+      d = await r.json();
+    } catch (e) {
+      host.innerHTML = `<div class="muted small" style="padding:10px;color:#c0392b">取得に失敗しました: ${escapeHtml(String(e))}</div>`;
+      return;
+    }
+    if (d.error) { host.innerHTML = `<div class="muted small" style="padding:10px">エラー: ${escapeHtml(d.error)}</div>`; return; }
+    if (!d.has_data || !(d.roots || []).length) {
+      host.innerHTML = `<div class="empty-state"><div class="icon">🌳</div>
+        <div class="title">このPCにはプロセスの親子情報がありません</div>
+        プロセスツリーは <b>プロセス作成ログ</b>（Sysmon EventID 1 または セキュリティ 4688）が必要です。<br>
+        Webシェルやマルウェア実行など、プロセス起動を伴う攻撃ログだとツリーが描けます。</div>`;
+      if (cnt) cnt.textContent = "";
+      return;
+    }
+    if (cnt) cnt.textContent = `— ${d.nodes_seen} プロセス${d.truncated ? "（上限で一部省略）" : ""}・キー: ${d.key_mode === "guid" ? "Sysmon GUID" : "PID"}`;
+    host.innerHTML = `<ul class="ptree">${d.roots.map(renderProcNode).join("")}</ul>`;
+  }
+
+  function renderProcNode(node) {
+    const img = node.image ? procBasename(node.image) : "(不明なプロセス)";
+    const hit = node.detection;
+    const lv = hit ? (hit.level || "").toLowerCase() : "";
+    const badge = hit
+      ? `<span class="pt-hit lvl-${escapeHtml(lv)}" title="${escapeHtml(hit.rule_title || "")}">⚑ ${escapeHtml(LEVEL_JA[lv] || lv)}: ${escapeHtml(hit.rule_title || "検知")}</span>`
+      : "";
+    const user = node.user ? `<span class="pt-user">👤 ${escapeHtml(node.user)}</span>` : "";
+    const pid = node.pid ? `<span class="pt-pid">PID ${escapeHtml(String(node.pid))}</span>` : "";
+    const when = node.ts ? `<span class="pt-when">🕒 ${escapeHtml(fmtWhen(node.ts))}</span>` : "";
+    const cmd = node.cmdline && node.cmdline !== node.image
+      ? `<div class="pt-cmd"><code>${escapeHtml(node.cmdline.length > 300 ? node.cmdline.slice(0,300) + "…" : node.cmdline)}</code></div>` : "";
+    const kids = (node.children || []).length
+      ? `<ul class="ptree">${node.children.map(renderProcNode).join("")}</ul>` : "";
+    return `<li class="pt-node${hit ? " pt-node-hit lvl-" + escapeHtml(lv) : ""}">
+        <div class="pt-row">
+          <span class="pt-img">🖥 ${escapeHtml(img)}</span>
+          ${badge}${user}${pid}${when}
+        </div>
+        ${cmd}
+        ${kids}
+      </li>`;
+  }
+
+  function procBasename(p) {
+    const s = String(p).replace(/^["']|["']$/g, "").replace(/\\/g, "/").replace(/\/+$/,"");
+    return s.split("/").pop() || s;
+  }
 
   // -------- 公開モード: 大会の全体統計ダッシュボード --------
   async function loadRankingStats() {

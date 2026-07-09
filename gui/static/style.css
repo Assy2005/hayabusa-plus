@@ -759,6 +759,60 @@ body.is-admin .is-admin-only { display: block !important; }
 }
 .kc-proc { color: #1a5; font-weight: 600; }
 .kc-user { color: var(--muted); }
+.kc-when { font-size: 11px; color: #6a5acd; margin-top: 2px; }
+.kc-narr {
+  font-size: 12px; line-height: 1.4; margin-top: 3px;
+  color: var(--ink, #222);
+}
+.kc-stage-when { font-weight: 400; font-size: 11px; color: #6a5acd; margin-left: 4px; }
+.kc-ordernote { margin: 2px 0 8px; }
+.kc-warn {
+  margin: 2px 0 8px; padding: 6px 9px; border-radius: 6px;
+  background: #FFF3CD; border: 1px solid #E0C97A; font-size: 12px;
+}
+.kc-sort-toggle { margin-left: 6px; vertical-align: middle; }
+
+@media (prefers-color-scheme: dark) {
+  .kc-narr { color: #e8e8ea; }
+  .kc-warn { background: #3a3320; border-color: #6a5a2a; }
+}
+
+/* ===== プロセスツリー ===== */
+.proctree-host { overflow-x: auto; }
+ul.ptree { list-style: none; margin: 0; padding-left: 0; }
+ul.ptree ul.ptree { margin-left: 18px; padding-left: 14px; border-left: 2px solid var(--line); }
+.pt-node { margin: 3px 0; }
+.pt-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--panel); width: fit-content; max-width: 100%;
+}
+.pt-node-hit > .pt-row { border-width: 2px; }
+.pt-node-hit.lvl-critical > .pt-row { border-color: #B30000; background: #FBEAEA; }
+.pt-node-hit.lvl-high > .pt-row { border-color: #E8720C; background: #FBF0E5; }
+.pt-node-hit.lvl-medium > .pt-row { border-color: #C9A227; background: #FCF7E3; }
+.pt-node-hit.lvl-low > .pt-row { border-color: #3a8; background: #EAF7F0; }
+.pt-img { font-weight: 700; }
+.pt-hit {
+  font-size: 11px; font-weight: 700; padding: 0 7px; border-radius: 10px;
+  color: #fff; background: #888;
+}
+.pt-hit.lvl-critical { background: #B30000; }
+.pt-hit.lvl-high { background: #E8720C; }
+.pt-hit.lvl-medium { background: #C9A227; }
+.pt-hit.lvl-low { background: #2f9e63; }
+.pt-user, .pt-pid, .pt-when { font-size: 11px; color: var(--muted); }
+.pt-cmd { margin: 2px 0 2px 12px; font-size: 12px; word-break: break-all; }
+.pt-cmd code { background: rgba(0,0,0,.05); padding: 1px 6px; border-radius: 4px; }
+.pt-legend-hit {
+  display: inline-block; padding: 0 6px; border: 2px solid #E8720C;
+  border-radius: 6px; background: #FBF0E5;
+}
+@media (prefers-color-scheme: dark) {
+  .pt-node-hit.lvl-critical > .pt-row { background: #2a1414; }
+  .pt-node-hit.lvl-high > .pt-row { background: #2a1e12; }
+  .pt-cmd code { background: rgba(255,255,255,.08); }
+}
 .kc-arrow {
   flex: 0 0 auto; align-self: center; color: #B30000;
   font-size: 18px; font-weight: 700; padding: 0 1px;

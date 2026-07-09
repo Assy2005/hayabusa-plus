@@ -1150,6 +1150,23 @@ class Handler(BaseHTTPRequestHandler):
                              "risk_weights": STORE.RISK_WEIGHTS})
             return
 
+        m = re.match(r"^/api/hosts/([^/]+)/process_tree$", path)
+        if m:
+            # Whole-host process tree (dedicated tab). Built from process-create
+            # detections (Sysmon EID 1 / Security EID 4688).
+            computer = unquote(m.group(1))
+            qs = parse_qs(u.query)
+            inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
+            jid = qs.get("job", [""])[0] or None
+            try:
+                tree = _process_tree.build_host_tree(
+                    STORE, computer, job_id=jid, include_suppressed=inc)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json(tree)
+            return
+
         m = re.match(r"^/api/hosts/([^/]+)/attack_story$", path)
         if m:
             # ATT&CK kill-chain reconstruction for one host (attack diagram).

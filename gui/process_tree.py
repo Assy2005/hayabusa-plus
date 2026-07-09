@@ -36,6 +36,10 @@ from typing import Any
 # carry parent info and would just inflate the tree.
 PROCESS_CREATE_EID = "1"
 PROCESS_CHANNEL = "Microsoft-Windows-Sysmon/Operational"
+# Windows Security "A new process has been created". Has no ProcessGuid, only
+# PIDs (hex). Fields: NewProcessName / NewProcessId / ProcessId (parent) /
+# ParentProcessName / SubjectUserName / CommandLine (if audited).
+SECURITY_PROC_EID = "4688"
 
 # Maximum nodes returned. A busy host can produce hundreds of process
 # creates in 10 minutes; rendering thousands of HTML nodes hangs the
@@ -324,4 +328,158 @@ def build_tree(store, job_id: str, line_no: int,
         "roots": roots,
         "focal_guid": focal_guid,
         "key_mode": "guid" if by_guid else ("pid" if by_pid else "empty"),
+    }
+
+
+def _proc_record_any(raw_json_str: str) -> dict[str, Any] | None:
+    """Extract a process-create record from a Sysmon EID 1 *or* a Windows
+    Security EID 4688 event. Returns a normalised dict or None.
+
+    Unlike `_extract_process_record` (Sysmon-only, used by the focal tree),
+    this also understands 4688 so the host-level tree works on machines that
+    only have Security-log process auditing (no Sysmon)."""
+    try:
+        ev = json.loads(raw_json_str)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    eid = str(ev.get("EventID", ""))
+    combo: dict[str, Any] = {}
+    for src in (_coerce_details(ev.get("Details")),
+                ev.get("EventData") or {}, ev.get("AllFieldInfo") or {},
+                ev.get("ExtraFieldInfo") or {}):
+        if isinstance(src, dict):
+            for k, v in src.items():
+                if v not in (None, ""):
+                    combo[k] = v
+
+    if eid == PROCESS_CREATE_EID:
+        rec = {
+            "guid": combo.get("ProcessGuid") or "",
+            "pid": str(combo.get("ProcessId") or ""),
+            "parent_guid": combo.get("ParentProcessGuid") or "",
+            "parent_pid": str(combo.get("ParentProcessId") or ""),
+            "image": combo.get("Image") or "",
+            "cmdline": combo.get("CommandLine") or "",
+            "user": combo.get("User") or "",
+            "integrity": combo.get("IntegrityLevel") or "",
+            "parent_image": combo.get("ParentImage") or "",
+        }
+    elif eid == SECURITY_PROC_EID:
+        rec = {
+            "guid": "",
+            "pid": str(combo.get("NewProcessId") or ""),
+            "parent_guid": "",
+            "parent_pid": str(combo.get("ProcessId") or ""),
+            "image": combo.get("NewProcessName") or "",
+            "cmdline": combo.get("CommandLine") or combo.get("Proc") or "",
+            "user": combo.get("SubjectUserName") or combo.get("TargetUserName") or "",
+            "integrity": combo.get("MandatoryLabel") or combo.get("TokenElevationType") or "",
+            "parent_image": combo.get("ParentProcessName") or "",
+        }
+    else:
+        return None
+
+    if not rec["pid"] and not rec["guid"]:
+        return None
+    rec["_ts"] = ev.get("Timestamp")
+    return rec
+
+
+def build_host_tree(store, computer: str, job_id: str | None = None,
+                    include_suppressed: bool = False) -> dict[str, Any]:
+    """Build the whole-host process tree from every process-create *detection*
+    on a computer (Sysmon EID 1 and/or Security EID 4688).
+
+    Because Hayabusa only emits events a rule matched, the tree covers the
+    flagged processes and their flagged relatives — enough to see "what
+    launched what" during the incident. Nodes carry a `detection` link when a
+    rule fired on that process. Returns a forest ({roots:[...]})."""
+    if not computer:
+        return {"error": "no computer specified", "roots": []}
+
+    rows = store.query_detections(
+        computer=computer, job_id=job_id,
+        include_suppressed=include_suppressed,
+        limit=8000, order_by="ts_asc",
+    )
+
+    by_guid: dict[str, dict[str, Any]] = {}
+    by_pid: dict[str, dict[str, Any]] = {}
+    truncated = False
+
+    for row in rows:
+        rec = _proc_record_any(row["raw_json"])
+        if not rec:
+            continue
+        guid = rec["guid"]
+        pid = rec["pid"]
+        node = {
+            "guid": guid, "pid": pid,
+            "image": rec["image"], "cmdline": rec["cmdline"],
+            "user": rec["user"], "integrity": rec["integrity"],
+            "parent_guid": rec["parent_guid"], "parent_pid": rec["parent_pid"],
+            "parent_image": rec["parent_image"],
+            "ts": rec.get("_ts") or row["ts"],
+            "detection": {
+                "job_id": row["job_id"], "line_no": row["line_no"],
+                "level": row["level"], "rule_title": row["rule_title"],
+                "rule_id": row["rule_id"],
+            } if row["rule_id"] else None,
+            "children": [],
+        }
+        # Prefer the record with the most command-line detail per key.
+        if guid:
+            ex = by_guid.get(guid)
+            if not ex or len(node["cmdline"]) > len(ex.get("cmdline") or ""):
+                node["children"] = ex["children"] if ex else []
+                by_guid[guid] = node
+            if node["detection"] and not by_guid[guid].get("detection"):
+                by_guid[guid]["detection"] = node["detection"]
+        elif pid:
+            ex = by_pid.get(pid)
+            if not ex or len(node["cmdline"]) > len(ex.get("cmdline") or ""):
+                node["children"] = ex["children"] if ex else []
+                by_pid[pid] = node
+            if node["detection"] and not by_pid[pid].get("detection"):
+                by_pid[pid]["detection"] = node["detection"]
+        if len(by_guid) + len(by_pid) >= MAX_NODES:
+            truncated = True
+            break
+
+    # Stitch: GUID linking when available, otherwise PID linking.
+    roots: list[dict[str, Any]] = []
+    if by_guid:
+        for guid, node in by_guid.items():
+            pg = node["parent_guid"]
+            if pg and pg in by_guid:
+                by_guid[pg]["children"].append(node)
+            else:
+                # Synthesise a parent placeholder from ParentImage so the
+                # tree shows e.g. w3wp.exe -> powershell.exe even when the
+                # parent process itself wasn't a detection.
+                roots.append(node)
+    elif by_pid:
+        for pid, node in by_pid.items():
+            pp = node["parent_pid"]
+            if pp and pp in by_pid and pp != pid:
+                by_pid[pp]["children"].append(node)
+            else:
+                roots.append(node)
+
+    def _sort(node):
+        node["children"].sort(key=lambda c: c.get("ts") or "")
+        for ch in node["children"]:
+            _sort(ch)
+    roots.sort(key=lambda r: r.get("ts") or "")
+    for r in roots:
+        _sort(r)
+
+    nodes = len(by_guid) + len(by_pid)
+    return {
+        "computer": computer,
+        "roots": roots,
+        "nodes_seen": nodes,
+        "truncated": truncated,
+        "key_mode": "guid" if by_guid else ("pid" if by_pid else "empty"),
+        "has_data": nodes > 0,
     }

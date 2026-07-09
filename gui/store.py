@@ -865,7 +865,103 @@ class Store:
         "Impact":     (15, "破壊・影響"),
     }
 
+    # ATT&CK 技術ベースID → 「その手口が何をするか」の日本語動作句。
+    # {prog}/{svc} は実行主体で置換する。無い技術は戦術ベースの汎用句を使う。
+    _TECH_ACTION_JA: dict[str, str] = {
+        "T1190": "の脆弱性を突かれ、外部から侵入されました",
+        "T1505": "に Web シェル（不正な常駐プログラム）が仕込まれました",
+        "T1059": "でコマンド／スクリプトを実行しました",
+        "T1047": "で WMI を使ってコマンドを実行しました",
+        "T1204": "をユーザーに実行させられました",
+        "T1543": "でサービスを作成し、居座ろうとしました",
+        "T1547": "で自動起動の設定を追加し、居座ろうとしました",
+        "T1546": "でイベント連動の仕掛けを作り、居座ろうとしました",
+        "T1053": "でスケジュールタスクを作成し、居座ろうとしました",
+        "T1136": "で新しいアカウントを作成しました",
+        "T1098": "でアカウントの権限を書き換えました",
+        "T1003": "で認証情報（パスワード／ハッシュ）を盗み出そうとしました",
+        "T1555": "で保存された資格情報を抜き取ろうとしました",
+        "T1552": "で無防備に置かれた資格情報を探し出そうとしました",
+        "T1558": "で Kerberos チケットを盗用／偽造しようとしました",
+        "T1550": "で盗んだ認証情報（Pass-the-Hash 等）を悪用しました",
+        "T1070": "でログを消去し、痕跡を隠そうとしました",
+        "T1562": "でセキュリティ機能（AV/EDR/ログ）を無効化しようとしました",
+        "T1055": "で他のプロセスに不正なコードを注入しました",
+        "T1014": "でルートキットにより存在を隠そうとしました",
+        "T1027": "で難読化／エンコードして中身を隠しました",
+        "T1218": "で正規ツールを悪用し、不正なコードを実行しました",
+        "T1036": "で正規プログラムになりすましました",
+        "T1112": "でレジストリを書き換えました",
+        "T1068": "で脆弱性を悪用し、権限を昇格しました",
+        "T1134": "でアクセストークンを操作し、権限を偽装しました",
+        "T1548": "で昇格制御（UAC 等）を回避しました",
+        "T1484": "でドメインポリシー（GPO）を改ざんしました",
+        "T1021": "で他の PC へリモート接続し、横移動しようとしました",
+        "T1570": "で他の PC へツールを送り込みました",
+        "T1071": "で外部の攻撃者サーバと通信しようとしました",
+        "T1105": "で外部から追加のツールを持ち込みました",
+        "T1219": "でリモート操作ソフトを使って外部から操作されました",
+        "T1572": "で通信をトンネリングして隠そうとしました",
+        "T1090": "でプロキシ経由に通信を偽装しました",
+        "T1486": "でファイルを暗号化しました（ランサムウェアの疑い）",
+        "T1490": "でバックアップ／復元機能を破壊しました",
+        "T1489": "でサービスを停止させました",
+        "T1485": "でデータを破壊しました",
+    }
+    _TACTIC_ACTION_JA: dict[str, str] = {
+        "Recon": "で偵察を行いました",
+        "InitAccess": "で侵入の足がかりを得ました",
+        "Exec": "で不正なコードを実行しました",
+        "Persis": "で居座るための仕掛けを作りました",
+        "PrivEsc": "で権限を昇格しようとしました",
+        "Stealth": "で痕跡を消し、検知を逃れようとしました",
+        "DefImpair": "で防御機能を妨害しました",
+        "CredAccess": "で認証情報を盗み出そうとしました",
+        "Disc": "でシステムやアカウントの情報を探索しました",
+        "LatMov": "で他の PC へ横移動しようとしました",
+        "Collect": "でデータを収集しました",
+        "C2": "で外部の攻撃者サーバと通信しようとしました",
+        "Exfil": "でデータを外部へ持ち出そうとしました",
+        "Impact": "でシステムやデータに被害を与えました",
+    }
+
+    @classmethod
+    def _narrative(cls, tactic: str, tags, actor: dict) -> str:
+        """「誰が・何で・何をした」を平易な日本語1文にする。
+
+        例: 「IIS APPPOOL\\DefaultAppPool」の powershell.exe が、
+            難読化された PowerShell コマンドを実行しました（cmd.exe から起動）。
+        """
+        actor = actor or {}
+        prog = actor.get("program") or actor.get("service") or "あるプロセス"
+        user = actor.get("user")
+        parent = actor.get("parent")
+        svc = actor.get("service")
+
+        # 動作句: 技術ベースID優先 → 戦術 → 汎用。
+        action = ""
+        for t in (tags or []):
+            base = str(t).upper().split(".", 1)[0]
+            if base in cls._TECH_ACTION_JA:
+                action = cls._TECH_ACTION_JA[base]
+                break
+        if not action:
+            action = cls._TACTIC_ACTION_JA.get(tactic, "で不審な動作を行いました")
+
+        who = f"「{user}」の " if user else ""
+        sentence = f"{who}{prog} {action}。"
+        extras = []
+        if parent and parent != prog:
+            extras.append(f"{parent} から起動")
+        if svc and svc != prog:
+            extras.append(f"サービス名: {svc}")
+        if extras:
+            sentence += "（" + "・".join(extras) + "）"
+        return sentence
+
     def host_summary(self, include_suppressed: bool = False) -> list[dict]:
+        """One row per `computer` with detection counts + risk score."""
+        join = self._SUPP_JOIN
         """One row per `computer` with detection counts + risk score."""
         join = self._SUPP_JOIN
         where = " WHERE d.computer IS NOT NULL"
@@ -1302,6 +1398,8 @@ class Store:
                         # 「何が実行したか」= このルールで見えた実行プログラム/ユーザー
                         "programs": [prog] if prog else [],
                         "users": [usr] if usr else [],
+                        # 「誰が・何で・何をした」の平易な日本語説明
+                        "narrative": self._narrative(tac, tags, actor),
                     }
                 else:
                     info["count"] += 1
@@ -1317,17 +1415,30 @@ class Store:
                         info["users"].append(usr)
 
         # Order tactics along the kill chain; unknown tactics go last.
+        # Also compute each stage's first/last timestamp so the UI can offer
+        # a chronological view and the user can check the real sequence.
         ordered = []
         for tac, techs in stages.items():
             order, ja = self.TACTIC_ORDER.get(tac, (99, tac))
-            items = sorted(techs.values(),
-                           key=lambda x: (not x["high_confidence"], x["first"] or ""))
+            items = sorted(techs.values(), key=lambda x: x["first"] or "")
+            firsts = [t["first"] for t in items if t["first"]]
+            lasts = [t["last"] for t in items if t["last"]]
             ordered.append({
                 "tactic": tac, "tactic_ja": ja, "order": order,
                 "techniques": items,
                 "hc": any(t["high_confidence"] for t in items),
+                "first": min(firsts) if firsts else None,
+                "last": max(lasts) if lasts else None,
             })
         ordered.sort(key=lambda s: s["order"])
+
+        # Does the observed timeline actually follow the textbook kill-chain
+        # order? Compare stage lifecycle order vs chronological order so the
+        # UI can be honest about whether the left-to-right story is real time.
+        timed = [s for s in ordered if s["first"]]
+        chrono = sorted(timed, key=lambda s: s["first"])
+        timeline_matches_stage_order = (
+            [s["tactic"] for s in timed] == [s["tactic"] for s in chrono])
 
         hc_total = sum(1 for s in ordered for t in s["techniques"]
                        if t["high_confidence"])
@@ -1337,6 +1448,7 @@ class Store:
             "stages": ordered,
             "hc_total": hc_total,
             "tactic_count": len(ordered),
+            "timeline_matches_stage_order": timeline_matches_stage_order,
         }
 
     def rule_feedback(self) -> list[sqlite3.Row]:

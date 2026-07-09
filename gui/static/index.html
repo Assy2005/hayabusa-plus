@@ -19,6 +19,7 @@
       <button data-tab="results" class="tab local-only">📋 結果</button>
       <button data-tab="hunt" class="tab local-only">🔎 さがす</button>
       <button data-tab="ranking" class="tab">🏆 危険度ランキング</button>
+      <button data-tab="proctree" class="tab">🌳 プロセスツリー</button>
       <button data-tab="hosts" class="tab local-only">💻 パソコン別</button>
       <button data-tab="rules" class="tab">📖 検出ルール</button>
       <button data-tab="about" class="tab">ℹ️ 情報</button>
@@ -684,6 +685,30 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- プロセスツリー -->
+    <section id="tab-proctree" class="tab-panel">
+      <div class="tab-intro">
+        <span class="ti-icon">🌳</span>
+        <span class="ti-text"><strong>「どのプログラムが、どのプログラムを起動したか」を親子ツリーで表示。</strong>
+          攻撃は「正規プロセス → 不審な子プロセス」の連鎖で起きます。検知が出たプロセスは色付きで強調します。</span>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>プロセスツリー <span class="muted small" id="proctree-count"></span></h2>
+          <span class="dash-mini-ctrl">
+            <label>PC <select id="proctree-computer"><option value="">選択してください</option></select></label>
+            <label class="row inline"><input type="checkbox" id="proctree-suppressed" /><span>抑制も含む</span></label>
+            <button id="proctree-refresh" class="ghost-btn small">↻ 更新</button>
+          </span>
+        </div>
+        <div class="muted small" style="margin-bottom:8px">
+          🖥 = 実行ファイル、👤 = 実行ユーザー。<span class="pt-legend-hit">色付きの枠</span>は検知が出たプロセスです。
+          親子関係は Sysmon（プロセスGUID）または Security 4688（プロセスID）から復元します。
+        </div>
+        <div id="proctree-host" class="proctree-host"></div>
       </div>
     </section>
 
