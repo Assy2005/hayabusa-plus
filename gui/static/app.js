@@ -55,6 +55,8 @@ console.log("[app] app.js v2026-05-21-c executing");
   // 公開(危険度ランキング)モードの判定。サーバが 0.0.0.0 で待受しているとき
   // network_mode=true。ローカル専用機能を隠し、ランキングを入口にする。
   fetch("/api/config").then(r => r.json()).then(cfg => {
+    // 運営者(localhost)だけに「安全としてマーク」等の管理操作を見せる。
+    document.body.classList.toggle("is-admin", !!(cfg && cfg.is_admin));
     if (cfg && cfg.network_mode) {
       document.body.classList.add("public-mode");
       // 入口はランキング。直リンク (#results 等) でローカル専用タブを開いた場合も振り替える。
@@ -934,6 +936,8 @@ console.log("[app] app.js v2026-05-21-c executing");
       ? "<ul>" + detail.rule.falsepositives.map(s => `<li>${escapeHtml(s)}</li>`).join("") + "</ul>"
       : `<span class="muted small">記載なし</span>`;
     const ruleFile = detail?.rule?.filename || "";
+    const ruleId = detail?.detection?._rule_id || ev._rule_id || "";
+    const ruleTitle = ev.RuleTitle || detail?.rule?.title || detail?.detection?.RuleTitle || "";
 
     explain.innerHTML = `
       <div class="explain-block">
@@ -970,6 +974,16 @@ console.log("[app] app.js v2026-05-21-c executing");
           &nbsp; &nbsp;
           <a href="#" data-job="${jobId}" data-line="${lineNo}" class="open-in-results">結果タブで詳細を見る →</a>
         </div>
+        ${ruleId ? `<div class="explain-admin is-admin-only">
+          <button type="button" class="btn btn-ghost mark-safe-btn"
+                  data-rule-id="${escapeHtml(ruleId)}" data-rule-title="${escapeHtml(ruleTitle)}">
+            🛡 このルールを安全としてマーク（スコアから除外）
+          </button>
+          <span class="mark-safe-status muted small"></span>
+          <div class="muted small" style="margin-top:4px">
+            運営者だけに表示。無害と判断した検知をスコア計算から外します（検知一覧には残ります）。
+          </div>
+        </div>` : ""}
       </div>`;
 
     // 検知したログの中身を描画 (Hayabusa の Details / ExtraFieldInfo を再利用)。
@@ -990,6 +1004,46 @@ console.log("[app] app.js v2026-05-21-c executing");
       // Give the tab a tick to render, then open the job detail.
       setTimeout(() => openDetail(jobId), 80);
     });
+
+    // 運営者向け「安全としてマーク」ボタン。ルール単位で抑制を登録し、
+    // 全体ビューとランキングを再計算する。
+    const safeBtn = explain.querySelector(".mark-safe-btn");
+    if (safeBtn) safeBtn.addEventListener("click", () => markRuleSafe(safeBtn));
+  }
+
+  async function markRuleSafe(btn) {
+    const ruleId = btn.dataset.ruleId;
+    const title = btn.dataset.ruleTitle || ruleId;
+    const status = btn.parentNode.querySelector(".mark-safe-status");
+    if (!ruleId) return;
+    if (!confirm(`「${title}」を安全なルールとして扱い、危険度スコアの計算から外します。\n`
+        + "（検知一覧・全体ビューには引き続き表示されます。ルールタブの「安全リスト」からいつでも解除できます）\n\nよろしいですか？")) return;
+    btn.disabled = true;
+    if (status) status.textContent = "登録中…";
+    try {
+      const r = await fetch("/api/suppressions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rule_id: ruleId, computer: null,
+          reason: `運営が安全と判断: ${title}`, created_by: "operator",
+        }),
+      });
+      const res = await r.json();
+      if (!r.ok || res.error) {
+        if (status) status.textContent = "エラー: " + (res.error || r.status);
+        btn.disabled = false;
+        return;
+      }
+      if (status) status.textContent = "✓ 安全リストに追加しました。スコアを再計算しました。";
+      btn.textContent = "✓ 安全としてマーク済み";
+      // 全体ビュー・ランキング・安全リストを更新して即座に反映。
+      if (document.getElementById("tab-dashboard")?.classList.contains("active")) loadDashboard();
+      if (document.body.classList.contains("public-mode")) { loadRanking?.(); loadRankingStats?.(); }
+      if (typeof loadSuppressions === "function") loadSuppressions();
+    } catch (e) {
+      if (status) status.textContent = "エラー: " + String(e);
+      btn.disabled = false;
+    }
   }
 
   // -------- jobs / results tab --------
@@ -2109,10 +2163,52 @@ console.log("[app] app.js v2026-05-21-c executing");
     // 「いつ・どこで・何が」を一目で: 最近の重大イベント一覧。
     loadRecentEvents();
 
+    // 運営者専用の安全リスト（スコア除外ルール）を描画。
+    loadSafeList();
+
     // Run the anomaly analyser. It can be slow on huge corpora (it walks
     // the whole detection table) so fire it asynchronously without
     // blocking the rest of the dashboard render.
     loadAnomalies();
+  }
+
+  // 運営者専用: 「安全としてマーク」したルール一覧を描画し、解除できる。
+  async function loadSafeList() {
+    const host = $("#safe-list");
+    if (!host || !document.body.classList.contains("is-admin")) return;
+    let rows = [];
+    try {
+      const r = await fetch("/api/suppressions");
+      rows = await r.json();
+    } catch (e) {
+      host.innerHTML = `<span class="muted small">一覧の取得に失敗しました。</span>`;
+      return;
+    }
+    if (!Array.isArray(rows) || !rows.length) {
+      host.innerHTML = `<span class="muted small">まだ安全リストは空です。検知の解説を開いて「安全としてマーク」を押すと、ここに登録されます。</span>`;
+      return;
+    }
+    host.innerHTML = "";
+    rows.forEach(row => {
+      const div = document.createElement("div");
+      div.className = "safe-list-row";
+      const scope = row.computer_like
+        ? `PC「${escapeHtml(row.computer_like)}」` : "全PC";
+      const label = escapeHtml(row.reason || row.rule_id || "(理由なし)");
+      div.innerHTML = `
+        <span class="safe-rule" title="${escapeHtml(row.rule_id || "")}">
+          🛡 ${label} <span class="muted small">(${scope})</span>
+        </span>
+        <button type="button" class="btn btn-ghost small safe-remove" data-id="${row.id}">解除</button>`;
+      div.querySelector(".safe-remove").addEventListener("click", async () => {
+        if (!confirm("このルールを安全リストから外し、再びスコアに数えるようにしますか？")) return;
+        await fetch(`/api/suppressions/${row.id}`, { method: "DELETE" });
+        loadSafeList();
+        loadDashboard();
+        if (document.body.classList.contains("public-mode")) { loadRanking?.(); loadRankingStats?.(); }
+      });
+      host.appendChild(div);
+    });
   }
 
   // ISO/hayabusa のタイムスタンプを "MM/DD HH:MM" に整形 (失敗時は先頭16文字)。

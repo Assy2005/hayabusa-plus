@@ -730,6 +730,29 @@ class Handler(BaseHTTPRequestHandler):
         "127.0.0.1", "localhost", "[::1]", "::1",
     }
 
+    # Loopback peer addresses. The OS sets client_address from the TCP peer,
+    # so a remote LAN visitor can never present one of these — this is a
+    # trustworthy "is the operator" signal even while published in network mode.
+    _LOOPBACK_PEERS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+    def _client_is_local(self) -> bool:
+        """True when the request comes from the machine running the server.
+
+        Lets the operator keep admin actions (marking a detection safe) while
+        the site is published to the LAN: the admin browses via localhost and
+        is loopback; anonymous visitors browse via the LAN IP and are not."""
+        try:
+            return self.client_address[0] in self._LOOPBACK_PEERS
+        except Exception:
+            return False
+
+    # Write endpoints an operator (loopback) may use even in network mode.
+    # Regex list, matched against the request path.
+    _ADMIN_WRITE_PATHS = (
+        re.compile(r"^/api/suppressions$"),
+        re.compile(r"^/api/suppressions/\d+$"),
+    )
+
     def _security_preflight(self) -> bool:
         """Return True if the request passes all gates; otherwise the
         handler has already responded with an appropriate 4xx and the
@@ -775,7 +798,13 @@ class Handler(BaseHTTPRequestHandler):
             #        data loss and to stop leaderboard tampering.
             if NETWORK_MODE:
                 wpath = urlparse(self.path).path
-                if wpath not in ("/api/scan", "/api/upload"):
+                allowed = wpath in ("/api/scan", "/api/upload")
+                # The operator (loopback) may also manage the safe-list so they
+                # can suppress false positives from the live 全体ビュー without
+                # stopping the public server. Remote visitors still can't.
+                if not allowed and self._client_is_local():
+                    allowed = any(p.match(wpath) for p in self._ADMIN_WRITE_PATHS)
+                if not allowed:
                     self._send_text(
                         "この操作は公開モードでは利用できません。", 403)
                     return False
@@ -1051,6 +1080,9 @@ class Handler(BaseHTTPRequestHandler):
                 "network_mode": NETWORK_MODE,   # published "danger ranking" site
                 "platform": sys.platform,
                 "live_supported": (sys.platform == "win32" and not NETWORK_MODE),
+                # True only for the operator (loopback). The SPA reveals the
+                # "mark safe" controls for this client even in public mode.
+                "is_admin": self._client_is_local(),
             })
             return
 

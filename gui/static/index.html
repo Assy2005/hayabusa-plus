@@ -320,6 +320,17 @@
         <div id="recent-events" class="recent-events"></div>
       </div>
 
+      <!-- 運営者専用: 安全としてマークしたルール（スコア除外）の管理 -->
+      <div class="card is-admin-only">
+        <h2>🛡 安全リスト（運営者専用） <span class="muted small">スコア計算から外したルール</span></h2>
+        <div class="muted small">
+          「最近の重大な出来事」の行を開いて <b>安全としてマーク</b> を押すと、そのルールをここに登録します。
+          誤検知だと分かった検知を危険度スコアから外せます（検知一覧・グラフには残ります）。
+          <b>解除</b>で元に戻せます。この操作はこのPC（localhost）からのみ可能です。
+        </div>
+        <div id="safe-list" style="margin-top:8px"></div>
+      </div>
+
       <!-- ④⑤ よく出た手口 / 危険だったPC -->
       <div class="dash-grid">
         <div class="card">

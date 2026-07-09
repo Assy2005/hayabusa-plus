@@ -691,6 +691,19 @@ footer.status-bar .right{margin-left:auto;display:flex;gap:10px}
 body.public-mode .public-only { display: flex !important; }
 body.public-mode .local-only { display: none !important; }
 
+/* 運営者(localhost)専用の管理操作。公開モードでも localhost からは見える。 */
+.is-admin-only { display: none !important; }
+body.is-admin .is-admin-only { display: block !important; }
+.explain-admin {
+  margin-top: 8px; padding: 10px 12px;
+  border: 1px dashed var(--line); border-radius: 8px;
+  background: #FFF7DA;
+}
+.explain-admin .mark-safe-btn { border-color: #B8860B; color: #7a5a00; }
+.explain-admin .mark-safe-status { margin-left: 8px; }
+.safe-list-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.safe-list-row .safe-rule { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* tutorial + fixed-settings cards stack as blocks, not flex rows */
 body.public-mode .pub-tutorial, body.public-mode .pub-fixed { display: block !important; }
 .pub-tutorial {
