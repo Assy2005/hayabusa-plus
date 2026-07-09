@@ -1156,6 +1156,22 @@ class Handler(BaseHTTPRequestHandler):
                              "risk_weights": STORE.RISK_WEIGHTS})
             return
 
+        m = re.match(r"^/api/hosts/([^/]+)/process_jobs$", path)
+        if m:
+            # Jobs (files) that actually contain process-creation logs for this
+            # host — so the process-tree file selector only offers ones that
+            # will produce a tree.
+            computer = unquote(m.group(1))
+            qs = parse_qs(u.query)
+            inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
+            try:
+                jobs = STORE.process_capable_jobs(computer, include_suppressed=inc)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json({"jobs": jobs})
+            return
+
         m = re.match(r"^/api/hosts/([^/]+)/process_tree$", path)
         if m:
             # Whole-host process tree (dedicated tab). Built from process-create

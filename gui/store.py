@@ -1353,6 +1353,34 @@ class Store:
             "timeline": pivoted,
         }
 
+    def process_capable_jobs(self, computer: str,
+                             include_suppressed: bool = False) -> list[dict]:
+        """このPCで『プロセスツリーを描けるジョブ』(＝プロセス作成ログを含む)。
+
+        プロセス作成ログ = Sysmon EventID 1 か Windows セキュリティ 4688。
+        これがある scan だけをファイルセレクタに出せば、選んでも空、を防げる。
+        戻り値は新しい順の [{job_id, started_at, count}]。count はそのPCの
+        プロセス作成検知の件数。"""
+        c = self._conn()
+        where = ("WHERE d.computer = ? AND ("
+                 "(d.event_id = '1' AND d.channel LIKE '%Sysmon%') "
+                 "OR d.event_id = '4688')")
+        params: list = [computer]
+        join = self._SUPP_JOIN
+        if not include_suppressed:
+            where += " AND s.id IS NULL"
+        sql = (
+            "SELECT d.job_id AS job_id, COUNT(*) AS n, "
+            "       MAX(j.started_at) AS started_at "
+            f"FROM detections d{join} "
+            "JOIN jobs j ON j.id = d.job_id "
+            f"{where} "
+            "GROUP BY d.job_id HAVING n > 0 "
+            "ORDER BY started_at DESC")
+        return [{"job_id": r["job_id"], "count": r["n"],
+                 "started_at": r["started_at"]}
+                for r in c.execute(sql, params)]
+
     def attack_story(self, computer: str, include_suppressed: bool = False) -> dict:
         """Reconstruct the ATT&CK kill-chain for one host.
 

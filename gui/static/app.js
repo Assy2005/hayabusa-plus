@@ -2820,8 +2820,9 @@ console.log("[app] app.js v2026-05-21-c executing");
         // 先頭のPCを自動選択。
         if (sel.options.length > 1) { sel.selectedIndex = 1; }
       } catch (e) {}
-      await populateProctreeJobs();
-      sel.onchange = loadProcessTree;
+      await populateProctreeJobs(sel.value);
+      // PC を変えたら、そのPCで「ツリーを描けるファイル」だけに絞り直す。
+      sel.onchange = async () => { await populateProctreeJobs(sel.value); loadProcessTree(); };
       const jb = $("#proctree-job"); if (jb) jb.onchange = loadProcessTree;
       const rb = $("#proctree-refresh"); if (rb) rb.onclick = loadProcessTree;
       const sp = $("#proctree-suppressed"); if (sp) sp.onchange = loadProcessTree;
@@ -2840,19 +2841,27 @@ console.log("[app] app.js v2026-05-21-c executing");
     loadProcessTree();
   }
 
-  // プロセスツリーの「対象ファイル(ジョブ)」候補を用意。別実機が同じ
-  // Computer 名でも、ファイル単位に絞れば混ざらない（解析用）。
-  async function populateProctreeJobs() {
+  // 「対象ファイル(ジョブ)」候補を、選択中のPCで“プロセスツリーを描ける
+  // ファイル”だけに絞って用意する（プロセス作成ログ EID1/4688 を含むもの）。
+  // 件数はそのPCのプロセス作成ログ数。混ざり防止＋空振り防止。
+  async function populateProctreeJobs(comp) {
     const jb = $("#proctree-job"); if (!jb) return;
+    while (jb.options.length > 1) jb.remove(1);
+    jb.options[0].textContent = "全ファイル";
+    if (!comp) return;
     try {
-      const jobs = await (await fetch("/api/jobs")).json();
-      while (jb.options.length > 1) jb.remove(1);
-      (Array.isArray(jobs) ? jobs : []).forEach(j => {
+      const d = await (await fetch(`/api/hosts/${encodeURIComponent(comp)}/process_jobs`)).json();
+      const jobs = (d && d.jobs) || [];
+      if (!jobs.length) {
+        // 描けるファイルが無い → その旨を「全ファイル」に明示。
+        jb.options[0].textContent = "（このPCにプロセス作成ログなし）";
+        return;
+      }
+      jobs.forEach(j => {
         const o = document.createElement("option");
-        o.value = j.id;
-        const when = j.started_at ? fmtWhen(new Date(j.started_at * 1000).toISOString()) : "";
-        const n = j.detection_count != null ? `・${j.detection_count}件` : "";
-        o.textContent = `${when || j.id.slice(0,8)}${n}`;
+        o.value = j.job_id;
+        const when = j.started_at ? fmtWhen(new Date(j.started_at * 1000).toISOString()) : j.job_id.slice(0,8);
+        o.textContent = `${when}・プロセス${(j.count || 0).toLocaleString()}件`;
         jb.appendChild(o);
       });
     } catch (e) {}
