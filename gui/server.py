@@ -75,6 +75,17 @@ _LOOPBACK = {"127.0.0.1", "localhost", "::1", ""}
 BIND_HOST = os.environ.get("HAYABUSA_GUI_HOST", "127.0.0.1").strip()
 NETWORK_MODE = BIND_HOST not in _LOOPBACK
 
+# Windows event-log files begin with the ASCII magic "ElfFile\0". We check
+# this on upload so a failed download (e.g. a GitHub "429 Too Many Requests"
+# HTML page saved as .evtx) is rejected with a clear message instead of
+# silently scanning to zero detections and looking like "nothing was found".
+_EVTX_MAGIC = b"ElfFile\x00"
+
+
+def _looks_like_evtx(head: bytes) -> bool:
+    """True if the leading bytes are the EVTX file signature."""
+    return bool(head) and head[:8] == _EVTX_MAGIC
+
 # --- Resource limits (matter most in no-auth network mode) -----------------
 # Request bodies are read fully into memory, so an unbounded Content-Length is
 # a trivial OOM DoS. Cap uploads generously (EVTX/zip) and everything else tight.
@@ -1858,6 +1869,21 @@ class Handler(BaseHTTPRequestHandler):
             filename = os.path.basename(unquote(fn_match.group(1)))
             if not filename or not re.match(r"^[A-Za-z0-9._\-]+$", filename):
                 continue
+
+            # 壊れた/中身が EVTX でないファイルを黙って受け入れると「検知0件＝安全」と
+            # 誤解させてしまう。実際 GitHub からの直リンクは "429 Too Many Requests"
+            # の HTML ページが .evtx として保存されがち。マジックバイトで弾く。
+            low = filename.lower()
+            if low.endswith(".evtx") and not _looks_like_evtx(payload):
+                head = payload[:48].decode("latin-1", "replace").strip().replace("\n", " ")
+                saved.append({
+                    "name": filename,
+                    "error": ("正しい EVTX ファイルではありません（ダウンロード失敗の"
+                              "可能性）。先頭が 'ElfFile' で始まっていません: "
+                              + (head[:40] or "(空ファイル)")),
+                })
+                continue
+
             target = UPLOAD_DIR / filename
             with open(target, "wb") as f:
                 f.write(payload)
@@ -1938,6 +1964,11 @@ class Handler(BaseHTTPRequestHandler):
                         n += 1
                     with zf.open(info) as src, open(out_path, "wb") as out:
                         shutil.copyfileobj(src, out, length=1024 * 1024)
+                    # 中身が本物の EVTX でないメンバー (壊れた DL 等) は捨てる。
+                    with open(out_path, "rb") as chk:
+                        if not _looks_like_evtx(chk.read(8)):
+                            out_path.unlink(missing_ok=True)
+                            continue
                     names.append(out_path.name)
         except zipfile.BadZipFile as exc:
             raise ValueError(f"壊れた ZIP ファイルです: {exc}") from exc
