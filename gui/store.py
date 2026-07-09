@@ -618,8 +618,15 @@ class Store:
         except ValueError:
             return []
         from datetime import timedelta
-        lo = (base - timedelta(minutes=window_minutes)).strftime("%Y-%m-%dT%H:%M:%S")
-        hi = (base + timedelta(minutes=window_minutes)).strftime("%Y-%m-%dT%H:%M:%S")
+        # CRITICAL: SQLite compares timestamps as strings. The stored ts
+        # usually has a SPACE between date and time ("2025-11-01 10:00:05
+        # +09:00"), but strftime("%Y-%m-%dT...") would emit a "T". Since
+        # 'T'(0x54) > ' '(0x20), a T-formatted bound never overlaps a
+        # space-formatted ts and the query returns nothing. Reproduce the
+        # focal ts's own separator so the range actually matches.
+        sep = "T" if (ts and "T" in ts[:11]) else " "
+        lo = (base - timedelta(minutes=window_minutes)).strftime(f"%Y-%m-%d{sep}%H:%M:%S")
+        hi = (base + timedelta(minutes=window_minutes)).strftime(f"%Y-%m-%d{sep}%H:%M:%S.999999")
         clauses = ["d.computer = ?", "d.ts >= ?", "d.ts <= ?"]
         params: list = [computer, lo, hi]
         if exclude:

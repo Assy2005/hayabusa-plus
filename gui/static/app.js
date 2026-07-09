@@ -930,6 +930,32 @@ console.log("[app] app.js v2026-05-21-c executing");
     </div>`;
   }
 
+  // 「このアラートの前後のログ」= 同じPCの ±5分に出た検知を時系列で。
+  // 攻撃はふつう単発でなく前後に痕跡が続くので、周辺を必ず確認できるように。
+  function renderAround(related, ev) {
+    const list = (related || []).slice();
+    if (!list.length) return "";
+    const focalTs = ev.Timestamp || "";
+    // 焦点の時刻を差し込んで前後が分かるように並べる（サーバは時刻昇順）。
+    const rowsHtml = list.slice(0, 20).map(r => {
+      const lv = ((r.level || "").toLowerCase().match(/[a-z]+/) || ["info"])[0];
+      const ja = LEVEL_JA[lv] || r.level || "";
+      const before = focalTs && r.ts && r.ts < focalTs;
+      const arrow = before ? "↑前" : "↓後";
+      return `<div class="around-row" data-job="${escapeHtml(r.job_id || "")}" data-line="${escapeHtml(String(r.line_no != null ? r.line_no : ""))}" title="クリックで詳細">
+          <span class="around-when">${escapeHtml(fmtWhen(r.ts))}</span>
+          <span class="around-dir">${arrow}</span>
+          <span class="lvl lvl-${escapeHtml(lv)}">${escapeHtml(ja)}</span>
+          <span class="around-title">${escapeHtml(r.rule_title || r.rule_id || "(検知)")}</span>
+          <span class="around-meta muted small">${escapeHtml([r.channel, r.event_id].filter(Boolean).join(" · "))}</span>
+        </div>`;
+    }).join("");
+    return `<div class="explain-around">
+        <h4>🕑 このアラートの前後のログ <span class="muted small">同じPCで ±5分に出た検知（クリックで移動）</span></h4>
+        <div class="around-list">${rowsHtml}</div>
+      </div>`;
+  }
+
   async function toggleExplain(row, ev) {
     // Toggle: if an explain row already follows this row, remove it.
     const next = row.nextElementSibling;
@@ -972,6 +998,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     const ruleId = detail?.detection?._rule_id || ev._rule_id || "";
     const ruleTitle = ev.RuleTitle || detail?.rule?.title || detail?.detection?.RuleTitle || "";
     const actorHtml = renderActor(detail?.actor);
+    const aroundHtml = renderAround(detail?.related, ev);
     // 「このログが実際に何をしたか」の平易な日本語1文（サーバ生成）。
     const narrHtml = detail?.narrative
       ? `<div class="explain-narr"><span class="en-k">📖 このログがしたこと</span>
@@ -1010,6 +1037,7 @@ console.log("[app] app.js v2026-05-21-c executing");
             ? `<details class="explain-log-raw"><summary class="muted small">生イベントデータ (ExtraFieldInfo)</summary><div class="explain-log-extra kv-lines"></div></details>`
             : ""}
         </div>
+        ${aroundHtml}
         <div class="explain-foot muted small">
           ${ruleFile ? "ルールファイル: <code>" + escapeHtml(ruleFile) + "</code>" : ""}
           &nbsp; &nbsp;
@@ -1044,6 +1072,17 @@ console.log("[app] app.js v2026-05-21-c executing");
       if (tabBtn) tabBtn.click();
       // Give the tab a tick to render, then open the job detail.
       setTimeout(() => openDetail(jobId), 80);
+    });
+
+    // 前後のログ行 → 結果タブでそのジョブを開く。
+    explain.querySelectorAll(".around-row").forEach(ar => {
+      ar.addEventListener("click", () => {
+        const jid = ar.dataset.job;
+        if (!jid) return;
+        const tabBtn = document.querySelector('.tab[data-tab="results"]');
+        if (tabBtn) tabBtn.click();
+        setTimeout(() => openDetail(jid), 80);
+      });
     });
 
     // 運営者向け「安全としてマーク」ボタン。ルール単位で抑制を登録し、
@@ -2529,23 +2568,22 @@ console.log("[app] app.js v2026-05-21-c executing");
         const lv = (t.level || "").toLowerCase();
         const hc = t.high_confidence
           ? `<span class="kc-hc" title="実際の攻撃で確認された手口">☣</span>` : "";
-        const ids = (t.techniques || []).length
-          ? `<span class="kc-ids">${escapeHtml(t.techniques.join(", "))}</span>` : "";
+        // 技術ID は控えめに（タイトルの tooltip 兼、小さなグレー表記）。
+        const idStr = (t.techniques || []).join(", ");
         const when = t.first
-          ? `<div class="kc-when" title="最初に記録された時刻">🕒 ${escapeHtml(fmtWhen(t.first))}</div>` : "";
-        // 「誰が・何で・何をした」の平易な日本語説明
+          ? `<span class="kc-when" title="最初に記録された時刻">🕒 ${escapeHtml(fmtWhen(t.first))}</span>` : "";
+        // 主役 = 「誰が・何で・何をした」の平易な日本語説明。
         const narr = t.narrative
-          ? `<div class="kc-narr">${escapeHtml(t.narrative)}</div>` : "";
-        // 「何が実行したか」= 実行プログラム / ユーザー
+          ? `<div class="kc-narr">${escapeHtml(t.narrative)}</div>`
+          : `<div class="kc-narr">${escapeHtml(t.title)}</div>`;
+        // 実行プログラムだけ具体情報として残す（ユーザーは説明文に含まれる）。
         const progs = (t.programs || []).filter(Boolean);
         const progHtml = progs.length
-          ? `<div class="kc-proc" title="実行プログラム">🖥 ${progs.map(p => escapeHtml(p)).join(", ")}</div>` : "";
-        const users = (t.users || []).filter(Boolean);
-        const userHtml = users.length
-          ? `<div class="kc-user" title="実行ユーザー">👤 ${users.map(u => escapeHtml(u)).join(", ")}</div>` : "";
-        return `<div class="kc-tech kc-${escapeHtml(lv)}">
-            ${hc}<span class="kc-tt">${escapeHtml(t.title)}</span>${ids}
-            ${when}${narr}${progHtml}${userHtml}
+          ? `<span class="kc-proc" title="実行プログラム">🖥 ${escapeHtml(progs.join(", "))}</span>` : "";
+        return `<div class="kc-tech kc-${escapeHtml(lv)}" title="${escapeHtml(t.title)}${idStr ? " ("+idStr+")" : ""}">
+            <div class="kc-tech-head">${hc}${when}</div>
+            ${narr}
+            <div class="kc-tech-meta">${progHtml}${idStr ? `<span class="kc-ids">${escapeHtml(idStr)}</span>` : ""}</div>
           </div>`;
       }).join("");
       const arrow = idx < stages.length - 1
@@ -2693,11 +2731,42 @@ console.log("[app] app.js v2026-05-21-c executing");
         // 先頭のPCを自動選択。
         if (sel.options.length > 1) { sel.selectedIndex = 1; }
       } catch (e) {}
+      await populateProctreeJobs();
       sel.onchange = loadProcessTree;
+      const jb = $("#proctree-job"); if (jb) jb.onchange = loadProcessTree;
       const rb = $("#proctree-refresh"); if (rb) rb.onclick = loadProcessTree;
       const sp = $("#proctree-suppressed"); if (sp) sp.onchange = loadProcessTree;
+      // 検知プロセスのクリック → 結果タブでそのログを開く。
+      const hostEl = $("#proctree-host");
+      if (hostEl) hostEl.addEventListener("click", (e) => {
+        const row = e.target.closest(".pt-clickable");
+        if (!row) return;
+        const jid = row.dataset.job, ln = row.dataset.line;
+        if (!jid || ln === "") return;
+        const tb = document.querySelector('.tab[data-tab="results"]');
+        if (tb) tb.click();
+        setTimeout(() => openDetail(jid), 80);
+      });
     }
     loadProcessTree();
+  }
+
+  // プロセスツリーの「対象ファイル(ジョブ)」候補を用意。別実機が同じ
+  // Computer 名でも、ファイル単位に絞れば混ざらない（解析用）。
+  async function populateProctreeJobs() {
+    const jb = $("#proctree-job"); if (!jb) return;
+    try {
+      const jobs = await (await fetch("/api/jobs")).json();
+      while (jb.options.length > 1) jb.remove(1);
+      (Array.isArray(jobs) ? jobs : []).forEach(j => {
+        const o = document.createElement("option");
+        o.value = j.id;
+        const when = j.started_at ? fmtWhen(new Date(j.started_at * 1000).toISOString()) : "";
+        const n = j.detection_count != null ? `・${j.detection_count}件` : "";
+        o.textContent = `${when || j.id.slice(0,8)}${n}`;
+        jb.appendChild(o);
+      });
+    } catch (e) {}
   }
 
   async function loadProcessTree() {
@@ -2713,6 +2782,8 @@ console.log("[app] app.js v2026-05-21-c executing");
     }
     host.innerHTML = `<div class="muted small" style="padding:10px">読込中…</div>`;
     const qs = new URLSearchParams();
+    const job = $("#proctree-job")?.value || "";
+    if (job) qs.set("job", job);
     if ($("#proctree-suppressed")?.checked) qs.set("include_suppressed", "1");
     let d;
     try {
@@ -2737,20 +2808,37 @@ console.log("[app] app.js v2026-05-21-c executing");
 
   function renderProcNode(node) {
     const img = node.image ? procBasename(node.image) : "(不明なプロセス)";
+    const kids = (node.children || []).length
+      ? `<ul class="ptree">${node.children.map(renderProcNode).join("")}</ul>` : "";
+
+    // 合成した親（このファイルには検知として記録されていない起動元）。
+    // 系譜を示すためだけの控えめなノード。
+    if (node.synthetic) {
+      const pid = node.pid ? `<span class="pt-pid">PID ${escapeHtml(String(node.pid))}</span>` : "";
+      return `<li class="pt-node pt-synth">
+          <div class="pt-row">
+            <span class="pt-img">🖥 ${escapeHtml(img)}</span>
+            <span class="pt-tag-parent">起動元</span>${pid}
+          </div>
+          ${kids}
+        </li>`;
+    }
+
     const hit = node.detection;
     const lv = hit ? (hit.level || "").toLowerCase() : "";
     const badge = hit
-      ? `<span class="pt-hit lvl-${escapeHtml(lv)}" title="${escapeHtml(hit.rule_title || "")}">⚑ ${escapeHtml(LEVEL_JA[lv] || lv)}: ${escapeHtml(hit.rule_title || "検知")}</span>`
+      ? `<span class="pt-hit lvl-${escapeHtml(lv)}" title="クリックで詳細">⚑ ${escapeHtml(LEVEL_JA[lv] || lv)}: ${escapeHtml(hit.rule_title || "検知")}</span>`
       : "";
     const user = node.user ? `<span class="pt-user">👤 ${escapeHtml(node.user)}</span>` : "";
     const pid = node.pid ? `<span class="pt-pid">PID ${escapeHtml(String(node.pid))}</span>` : "";
     const when = node.ts ? `<span class="pt-when">🕒 ${escapeHtml(fmtWhen(node.ts))}</span>` : "";
     const cmd = node.cmdline && node.cmdline !== node.image
       ? `<div class="pt-cmd"><code>${escapeHtml(node.cmdline.length > 300 ? node.cmdline.slice(0,300) + "…" : node.cmdline)}</code></div>` : "";
-    const kids = (node.children || []).length
-      ? `<ul class="ptree">${node.children.map(renderProcNode).join("")}</ul>` : "";
+    // 検知ノードはクリックで結果タブへジャンプできるように job/line を持たせる。
+    const dataAttr = hit
+      ? ` data-job="${escapeHtml(hit.job_id || "")}" data-line="${escapeHtml(String(hit.line_no != null ? hit.line_no : ""))}"` : "";
     return `<li class="pt-node${hit ? " pt-node-hit pt-lv-" + escapeHtml(lv) : ""}">
-        <div class="pt-row">
+        <div class="pt-row${hit ? " pt-clickable" : ""}"${dataAttr}>
           <span class="pt-img">🖥 ${escapeHtml(img)}</span>
           ${badge}${user}${pid}${when}
         </div>

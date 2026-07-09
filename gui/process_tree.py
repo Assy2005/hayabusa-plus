@@ -446,23 +446,54 @@ def build_host_tree(store, computer: str, job_id: str | None = None,
             truncated = True
             break
 
-    # Stitch: GUID linking when available, otherwise PID linking.
+    # Stitch parent -> child. Hayabusa only emits *detected* process-creates,
+    # so a flagged child's parent is usually NOT itself in the map (e.g.
+    # w3wp.exe spawns the flagged powershell.exe, but w3wp.exe wasn't a
+    # detection). Without help the child would float as a root and you'd lose
+    # the crucial "what launched it" context. So when the real parent is
+    # missing we synthesise a lightweight placeholder node from the child's
+    # Parent* fields and group siblings under it. Result: the ancestry chain
+    # (w3wp.exe -> powershell.exe -> appcmd.exe) is visible even though only
+    # the two leaf processes were flagged.
     roots: list[dict[str, Any]] = []
+    synth: dict[str, dict[str, Any]] = {}
+
+    def _synth_parent(key: str, image: str, guid: str, pid: str,
+                      ts: str) -> dict[str, Any]:
+        sp = synth.get(key)
+        if sp is None:
+            sp = {
+                "guid": guid, "pid": pid,
+                "image": image or "(記録されていない親プロセス)",
+                "cmdline": "", "user": "", "integrity": "",
+                "parent_guid": "", "parent_pid": "", "parent_image": "",
+                "ts": ts, "detection": None, "synthetic": True,
+                "children": [],
+            }
+            synth[key] = sp
+            roots.append(sp)
+        return sp
+
     if by_guid:
         for guid, node in by_guid.items():
             pg = node["parent_guid"]
             if pg and pg in by_guid:
                 by_guid[pg]["children"].append(node)
+            elif pg or node["parent_image"]:
+                key = "g:" + pg if pg else "pi:" + (node["parent_image"] or "")
+                _synth_parent(key, node["parent_image"], pg,
+                              node["parent_pid"], node["ts"])["children"].append(node)
             else:
-                # Synthesise a parent placeholder from ParentImage so the
-                # tree shows e.g. w3wp.exe -> powershell.exe even when the
-                # parent process itself wasn't a detection.
                 roots.append(node)
     elif by_pid:
         for pid, node in by_pid.items():
             pp = node["parent_pid"]
             if pp and pp in by_pid and pp != pid:
                 by_pid[pp]["children"].append(node)
+            elif (pp and pp != pid) or node["parent_image"]:
+                key = "p:" + pp if pp else "pi:" + (node["parent_image"] or "")
+                _synth_parent(key, node["parent_image"], "",
+                              pp, node["ts"])["children"].append(node)
             else:
                 roots.append(node)
 
