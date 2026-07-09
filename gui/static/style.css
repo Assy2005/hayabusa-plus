@@ -838,6 +838,12 @@ ul.ptree ul.ptree { margin-left: 20px; padding-left: 16px; border-left: 2px soli
 
 .pt-clickable { cursor: pointer; border-radius: 6px; }
 .pt-clickable:hover { background: rgba(43,108,176,.08); }
+.pt-present {
+  margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--panel-2, rgba(0,0,0,.02));
+}
+.pt-present-list { margin: 0; padding-left: 18px; }
+.pt-present-list li { margin: 2px 0; }
 
 @media (prefers-color-scheme: dark) {
   .pt-summary { background: #16202c; }

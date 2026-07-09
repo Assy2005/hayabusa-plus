@@ -424,7 +424,15 @@ def build_host_tree(store, computer: str, job_id: str | None = None,
     by_pid: dict[str, dict[str, Any]] = {}
     truncated = False
 
+    # 診断用: このスコープに実際どんなログ(チャネル/EventID)があるかを数える。
+    # プロセス作成ログが無くて空になったとき、理由を画面で説明するため。
+    from collections import Counter
+    present: Counter = Counter()
+
     for row in rows:
+        ch = row["channel"] or "(不明)"
+        eid = row["event_id"] or "?"
+        present[f"{ch}|{eid}"] += 1
         rec = _proc_record_any(row["raw_json"])
         if not rec:
             continue
@@ -537,6 +545,11 @@ def build_host_tree(store, computer: str, job_id: str | None = None,
         _sort(r)
 
     nodes = len(by_guid) + len(by_pid)
+    # 空だった理由を説明するための内訳（上位のチャネル/EventID）。
+    top_present = []
+    for key, n in present.most_common(8):
+        ch, _, eid = key.partition("|")
+        top_present.append({"channel": ch, "event_id": eid, "count": n})
     return {
         "computer": computer,
         "roots": roots,
@@ -544,4 +557,6 @@ def build_host_tree(store, computer: str, job_id: str | None = None,
         "truncated": truncated,
         "key_mode": "guid" if by_guid else ("pid" if by_pid else "empty"),
         "has_data": nodes > 0,
+        "total_detections": sum(present.values()),
+        "present": top_present,
     }

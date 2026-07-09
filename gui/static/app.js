@@ -2884,10 +2884,35 @@ console.log("[app] app.js v2026-05-21-c executing");
     }
     if (d.error) { host.innerHTML = `<div class="muted small" style="padding:10px">エラー: ${escapeHtml(d.error)}</div>`; return; }
     if (!d.has_data || !(d.roots || []).length) {
-      host.innerHTML = `<div class="empty-state"><div class="icon">🌳</div>
-        <div class="title">このPCにはプロセスの親子情報がありません</div>
-        プロセスツリーは <b>プロセス作成ログ</b>（Sysmon EventID 1 または セキュリティ 4688）が必要です。<br>
-        Webシェルやマルウェア実行など、プロセス起動を伴う攻撃ログだとツリーが描けます。</div>`;
+      // なぜ空なのかを説明する。件数はあるのにツリーが出ない＝そのログに
+      // 「プロセス作成ログ(EID1/4688)」が含まれていない、という意味。
+      const present = d.present || [];
+      const total = d.total_detections || 0;
+      const CH_JA = {
+        "Microsoft-Windows-Sysmon/Operational": "Sysmon",
+        "Security": "セキュリティ", "System": "システム",
+        "Microsoft-Windows-PowerShell/Operational": "PowerShell",
+        "Windows PowerShell": "PowerShell(旧)",
+      };
+      const presentHtml = present.length
+        ? `<div class="pt-present"><div class="muted small" style="margin:8px 0 4px">このデータに含まれる検知（上位）:</div>
+            <ul class="pt-present-list">${present.map(p =>
+              `<li><b>${(CH_JA[p.channel] || escapeHtml(p.channel))}</b> ・ EventID ${escapeHtml(String(p.event_id))} <span class="muted small">— ${p.count.toLocaleString()}件</span></li>`
+            ).join("")}</ul>
+            <div class="muted small" style="margin-top:6px">この中に <b>プロセス作成（Sysmon EID 1 / Security 4688）</b> がありません。</div></div>`
+        : "";
+      host.innerHTML = `<div class="empty-state" style="text-align:left;max-width:640px;margin:0 auto">
+        <div style="text-align:center"><div class="icon">🌳</div>
+        <div class="title">このデータではプロセスの親子を描けません</div></div>
+        <p>検知は <b>${total.toLocaleString()}件</b> ありますが、プロセスツリーには
+        「<b>どのプロセスが、どのプロセスを起動したか</b>」が記録された
+        <b>プロセス作成ログ</b>（Sysmon <b>EventID 1</b> または Windows セキュリティ <b>4688</b>）が必要です。
+        今回のログはPowerShellやログオン等の<b>別種のイベント</b>で、親子関係の情報を持っていません。</p>
+        ${presentHtml}
+        <p class="muted small">📌 ドロップダウンの「〇〇件」は<b>そのファイル全体</b>の検知数（このPC以外も含む）で、
+        プロセス作成ログの数ではありません。プロセスツリーを見るには、Sysmonを有効にしたPCのログや、
+        プロセス起動を含む攻撃サンプル（Webシェル・マルウェア実行など）が必要です。</p>
+      </div>`;
       if (cnt) cnt.textContent = "";
       return;
     }
