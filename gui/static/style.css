@@ -754,6 +754,11 @@ body.is-admin .is-admin-only { display: block !important; }
 .kc-tt { font-weight: 600; }
 .kc-ids { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
 .kc-hc { color: #B30000; font-weight: 700; margin-right: 3px; }
+.kc-proc, .kc-user {
+  font-size: 11px; margin-top: 2px; word-break: break-all;
+}
+.kc-proc { color: #1a5; font-weight: 600; }
+.kc-user { color: var(--muted); }
 .kc-arrow {
   flex: 0 0 auto; align-self: center; color: #B30000;
   font-size: 18px; font-weight: 700; padding: 0 1px;
@@ -772,9 +777,27 @@ body.is-admin .is-admin-only { display: block !important; }
   color: var(--muted); margin-right: 3px;
 }
 
+/* ===== 「何が実行したか」帯 (検知詳細の先頭) ===== */
+.actor-block {
+  margin: 0 0 12px; padding: 10px 12px;
+  border: 1px solid var(--line); border-left: 4px solid #1a7f4b;
+  border-radius: 8px; background: #F1F8F3;
+}
+.actor-head { font-weight: 700; margin-bottom: 6px; }
+.actor-row { margin: 3px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.actor-k { flex: 0 0 auto; font-weight: 600; min-width: 128px; }
+.actor-v {
+  flex: 1 1 260px; min-width: 0; word-break: break-all;
+  background: rgba(0,0,0,.05); padding: 1px 6px; border-radius: 4px;
+}
+.actor-v.cmd { font-size: 12px; }
+
 @media (prefers-color-scheme: dark) {
   .kc-tech { background: #23262e; }
   .killchain { background: #2a1e1e; border-color: #5a2a2a; }
+  .actor-block { background: #16241c; border-left-color: #2f9e63; }
+  .actor-v { background: rgba(255,255,255,.08); }
+  .kc-proc { color: #4fd08a; }
 }
 
 /* tutorial + fixed-settings cards stack as blocks, not flex rows */

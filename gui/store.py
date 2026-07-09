@@ -771,6 +771,65 @@ class Store:
             pass
         return out
 
+    # イベント種別で名前が違う「実行主体」フィールドの優先順位。
+    # 先に見つかったものを採用する。
+    _ACTOR_PROGRAM_FIELDS = (
+        "Image", "ImagePath", "NewProcessName", "Application", "SourceImage",
+        "ProcessName", "Proc", "TargetImage", "Path")
+    _ACTOR_COMMAND_FIELDS = ("CommandLine", "ProcessCommandLine", "ScriptBlockText")
+    _ACTOR_USER_FIELDS = (
+        "User", "Acct", "AccountName", "SubjectUserName", "TargetUserName")
+    _ACTOR_PID_FIELDS = ("PID", "ProcessId", "NewProcessId", "ClientProcessId")
+    _ACTOR_PARENT_FIELDS = ("ParentImage", "ParentProcessName", "ParentCommandLine")
+    _ACTOR_SERVICE_FIELDS = ("Svc", "ServiceName")
+
+    @staticmethod
+    def _program_basename(val: str) -> str:
+        """`"C:\\dir\\mysqld.exe" --flag` → `mysqld.exe`。実行ファイル名だけ抜く。"""
+        s = str(val).strip()
+        if not s:
+            return ""
+        if s[0] in "\"'":                      # 引用符付きパス → 閉じ引用符まで
+            end = s.find(s[0], 1)
+            s = s[1:end] if end > 0 else s[1:]
+        else:                                  # 素のパス → 最初の空白まで
+            s = s.split(" ")[0]
+        s = s.replace("\\", "/").rstrip("/")
+        return s.rsplit("/", 1)[-1] or s
+
+    @classmethod
+    def _extract_actor(cls, *sources) -> dict:
+        """検知イベントの Details / ExtraFieldInfo から「何が実行したか」を正規化。
+
+        フィールド名がイベント種別ごとに違うので、優先順位で拾って
+        {program, program_full, command, user, pid, parent, service} を返す。
+        値が取れないものは空文字。
+        """
+        combo: dict = {}
+        for src in sources:
+            if isinstance(src, dict):
+                for k, v in src.items():
+                    if k not in combo and v not in (None, ""):
+                        combo[k] = v
+
+        def pick(fields):
+            for f in fields:
+                v = combo.get(f)
+                if v not in (None, ""):
+                    return str(v)
+            return ""
+
+        prog_full = pick(cls._ACTOR_PROGRAM_FIELDS)
+        return {
+            "program": cls._program_basename(prog_full),
+            "program_full": prog_full,
+            "command": pick(cls._ACTOR_COMMAND_FIELDS),
+            "user": pick(cls._ACTOR_USER_FIELDS),
+            "pid": pick(cls._ACTOR_PID_FIELDS),
+            "parent": cls._program_basename(pick(cls._ACTOR_PARENT_FIELDS)),
+            "service": pick(cls._ACTOR_SERVICE_FIELDS),
+        }
+
     @staticmethod
     def _tags_are_high_confidence(tags, hc: set[str]) -> bool:
         """検知の MitreTags のいずれかが高信頼リストに一致するか。
@@ -1228,6 +1287,9 @@ class Store:
                 tactics = ["(不明)"]
             title = r["title"] or r["rule_id"] or "(名称不明)"
             key = r["rule_id"] or title
+            actor = self._extract_actor(ev.get("Details"), ev.get("ExtraFieldInfo"))
+            prog = actor.get("program") or actor.get("service")
+            usr = actor.get("user")
             for tac in tactics:
                 bucket = stages.setdefault(tac, {})
                 info = bucket.get(key)
@@ -1237,6 +1299,9 @@ class Store:
                         "techniques": sorted({str(t) for t in tags if t}),
                         "high_confidence": hc, "count": 1,
                         "first": r["ts"], "last": r["ts"],
+                        # 「何が実行したか」= このルールで見えた実行プログラム/ユーザー
+                        "programs": [prog] if prog else [],
+                        "users": [usr] if usr else [],
                     }
                 else:
                     info["count"] += 1
@@ -1246,6 +1311,10 @@ class Store:
                         if not info["last"] or r["ts"] > info["last"]:
                             info["last"] = r["ts"]
                     info["high_confidence"] = info["high_confidence"] or hc
+                    if prog and prog not in info["programs"] and len(info["programs"]) < 5:
+                        info["programs"].append(prog)
+                    if usr and usr not in info["users"] and len(info["users"]) < 3:
+                        info["users"].append(usr)
 
         # Order tactics along the kill chain; unknown tactics go last.
         ordered = []

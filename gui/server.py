@@ -1065,12 +1065,16 @@ class Handler(BaseHTTPRequestHandler):
                 exclude=(jid, line_no), limit=30)
             history = STORE.rule_history(row["rule_id"],
                                          exclude=(jid, line_no), limit=20)
+            # 「何が実行したか」= このログの実行プログラム/コマンド/ユーザーを正規化。
+            actor = STORE._extract_actor(
+                event.get("Details"), event.get("ExtraFieldInfo"))
             self._send_json({
                 "detection": event,
                 "rule": rule_meta,
                 "attack_tags": attack,
                 "related": related,
                 "rule_history": history,
+                "actor": actor,
             })
             return
 

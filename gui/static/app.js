@@ -897,6 +897,38 @@ console.log("[app] app.js v2026-05-21-c executing");
     return steps;
   }
 
+  // 「何が実行したか」= 正規化した実行プログラム/コマンド/ユーザー を目立つ帯で。
+  function renderActor(actor) {
+    if (!actor) return "";
+    const prog = actor.program_full || actor.program || actor.service || "";
+    const hasAny = prog || actor.command || actor.user || actor.parent;
+    if (!hasAny) return "";
+    const rows = [];
+    if (prog) {
+      const svc = actor.service && actor.service !== actor.program
+        ? ` <span class="muted small">(サービス: ${escapeHtml(actor.service)})</span>` : "";
+      rows.push(`<div class="actor-row"><span class="actor-k">🖥 実行プログラム</span>
+        <code class="actor-v">${escapeHtml(prog)}</code>${svc}</div>`);
+    }
+    if (actor.command && actor.command !== prog) {
+      const cmd = actor.command.length > 400 ? actor.command.slice(0, 400) + "…" : actor.command;
+      rows.push(`<div class="actor-row"><span class="actor-k">⌨ コマンド</span>
+        <code class="actor-v cmd">${escapeHtml(cmd)}</code></div>`);
+    }
+    if (actor.parent) {
+      rows.push(`<div class="actor-row"><span class="actor-k">↖ 親プロセス</span>
+        <code class="actor-v">${escapeHtml(actor.parent)}</code></div>`);
+    }
+    const meta = [];
+    if (actor.user) meta.push(`👤 ${escapeHtml(actor.user)}`);
+    if (actor.pid) meta.push(`PID ${escapeHtml(actor.pid)}`);
+    if (meta.length) rows.push(`<div class="actor-row muted small">${meta.join(" ・ ")}</div>`);
+    return `<div class="actor-block">
+      <div class="actor-head">🎯 何が実行したか</div>
+      ${rows.join("")}
+    </div>`;
+  }
+
   async function toggleExplain(row, ev) {
     // Toggle: if an explain row already follows this row, remove it.
     const next = row.nextElementSibling;
@@ -938,9 +970,11 @@ console.log("[app] app.js v2026-05-21-c executing");
     const ruleFile = detail?.rule?.filename || "";
     const ruleId = detail?.detection?._rule_id || ev._rule_id || "";
     const ruleTitle = ev.RuleTitle || detail?.rule?.title || detail?.detection?.RuleTitle || "";
+    const actorHtml = renderActor(detail?.actor);
 
     explain.innerHTML = `
       <div class="explain-block">
+        ${actorHtml}
         <div class="explain-grid">
           <div class="explain-col">
             <h4>なにを検知している?</h4>
@@ -2483,8 +2517,16 @@ console.log("[app] app.js v2026-05-21-c executing");
           ? `<span class="kc-hc" title="実際の攻撃で確認された手口">☣</span>` : "";
         const ids = (t.techniques || []).length
           ? `<span class="kc-ids">${escapeHtml(t.techniques.join(", "))}</span>` : "";
+        // 「何が実行したか」= 実行プログラム / ユーザー
+        const progs = (t.programs || []).filter(Boolean);
+        const progHtml = progs.length
+          ? `<div class="kc-proc" title="実行プログラム">🖥 ${progs.map(p => escapeHtml(p)).join(", ")}</div>` : "";
+        const users = (t.users || []).filter(Boolean);
+        const userHtml = users.length
+          ? `<div class="kc-user" title="実行ユーザー">👤 ${users.map(u => escapeHtml(u)).join(", ")}</div>` : "";
         return `<div class="kc-tech kc-${escapeHtml(lv)}">
             ${hc}<span class="kc-tt">${escapeHtml(t.title)}</span>${ids}
+            ${progHtml}${userHtml}
           </div>`;
       }).join("");
       const arrow = idx < story.stages.length - 1
