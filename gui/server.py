@@ -1135,6 +1135,20 @@ class Handler(BaseHTTPRequestHandler):
                              "risk_weights": STORE.RISK_WEIGHTS})
             return
 
+        m = re.match(r"^/api/hosts/([^/]+)/attack_story$", path)
+        if m:
+            # ATT&CK kill-chain reconstruction for one host (attack diagram).
+            computer = unquote(m.group(1))
+            qs = parse_qs(u.query)
+            inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
+            try:
+                story = STORE.attack_story(computer, include_suppressed=inc)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json(story)
+            return
+
         m = re.match(r"^/api/hosts/([^/]+)$", path)
         if m:
             # The hostname might contain anything Windows allows; URL-decode it.
@@ -1146,6 +1160,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, 500)
                 return
+            # 各ルールに平易な説明を付ける (ランキング展開の「ログごと説明」用)。
+            for rr in detail.get("top_rules", []):
+                rid = rr.get("rule_id")
+                meta = RULE_INDEX.lookup(rid) if rid and not str(rid).startswith("h:") else None
+                if meta:
+                    desc = (meta.get("description") or "").strip()
+                    rr["description"] = desc
+                    rr["attack_tags"] = _rule_index.attack_tags(meta)
             self._send_json(detail)
             return
 

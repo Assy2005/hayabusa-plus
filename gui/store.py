@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -750,6 +751,61 @@ class Store:
             pass
         return ids, terms
 
+    def _load_high_confidence(self) -> set[str]:
+        """高信頼 ATT&CK 技術ID を lookups/high_confidence.txt から読む。
+
+        実際の攻撃検体 (evtx-attack-samples) の戦術カバレッジに対応する技術ID。
+        ベース (T1003) を書くと配下サブ技術にも一致する。戻り値は大文字集合。
+        """
+        path = Path(__file__).resolve().parent.parent / "lookups" / "high_confidence.txt"
+        out: set[str] = set()
+        try:
+            for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                s = raw.split("#", 1)[0].strip()   # 行内コメントも除去
+                if not s:
+                    continue
+                m = re.match(r"^T\d{4}(?:\.\d{3})?$", s, re.IGNORECASE)
+                if m:
+                    out.add(s.upper())
+        except OSError:
+            pass
+        return out
+
+    @staticmethod
+    def _tags_are_high_confidence(tags, hc: set[str]) -> bool:
+        """検知の MitreTags のいずれかが高信頼リストに一致するか。
+
+        フル (T1003.001) と ベース (T1003) の双方で照合する。"""
+        if not hc or not tags:
+            return False
+        for t in tags:
+            if not t:
+                continue
+            u = str(t).upper()
+            if u in hc or u.split(".", 1)[0] in hc:
+                return True
+        return False
+
+    # hayabusa の戦術略称 (mitre_tactics.txt の tag_output_str) →
+    # (キルチェーン順, 日本語ラベル)。攻撃の流れを左→右で並べるのに使う。
+    TACTIC_ORDER: dict[str, tuple[int, str]] = {
+        "Recon":      (1,  "偵察"),
+        "ResDev":     (2,  "リソース開発"),
+        "InitAccess": (3,  "初期侵入"),
+        "Exec":       (4,  "実行"),
+        "Persis":     (5,  "永続化"),
+        "PrivEsc":    (6,  "権限昇格"),
+        "Stealth":    (7,  "防御回避"),
+        "DefImpair":  (8,  "防御妨害"),
+        "CredAccess": (9,  "資格情報アクセス"),
+        "Disc":       (10, "探索"),
+        "LatMov":     (11, "横展開"),
+        "Collect":    (12, "収集"),
+        "C2":         (13, "遠隔操作 (C2)"),
+        "Exfil":      (14, "持ち出し"),
+        "Impact":     (15, "破壊・影響"),
+    }
+
     def host_summary(self, include_suppressed: bool = False) -> list[dict]:
         """One row per `computer` with detection counts + risk score."""
         join = self._SUPP_JOIN
@@ -931,26 +987,54 @@ class Store:
 
         import math
         total_pcs = len(per_comp) or len(rows)
+
+        # 1c. 高信頼シグナル: 各 critical/high ルールの ATT&CK 技術 (MitreTags)
+        #     を1件ずつ拾い、実際の攻撃で確認された技術リストと照合する。
+        #     一致するルール = 「本物の侵害の可能性が高い」→ 環境ノイズ割引の
+        #     対象外にし、スコアを底上げする (下の _risk_score 参照)。
+        hc_set = self._load_high_confidence()
+        hc_rules: set[str] = set()
+        if hc_set:
+            for rr in c.execute(
+                "SELECT d.rule_id AS rule_id, d.raw_json AS raw_json "
+                "FROM detections d " + self._SUPP_JOIN + ch_where +
+                " GROUP BY d.rule_id", list(job_ids)):
+                rid = rr["rule_id"]
+                if not rid:
+                    continue
+                try:
+                    tags = (json.loads(rr["raw_json"]) or {}).get("MitreTags") or []
+                except (ValueError, TypeError):
+                    tags = []
+                if self._tags_are_high_confidence(tags, hc_set):
+                    hc_rules.add(rid)
+
         ambient: set[str] = set()
         if total_pcs >= self.AMBIENT_MIN_PCS:
             need = max(2, math.ceil(self.AMBIENT_PC_FRACTION * total_pcs))
-            ambient = {rid for rid, comps in rule_pcs.items() if len(comps) >= need}
+            ambient = {rid for rid, comps in rule_pcs.items()
+                       if len(comps) >= need and rid not in hc_rules}
         excl_ids, excl_terms = self._load_score_exclude()
 
-        def _counts(comp: str) -> tuple[int, int]:
+        def _keep(rid: str, *, allow_ambient: bool) -> bool:
+            # allow_ambient=False → この severity では環境ノイズ割引を効かせない
+            if allow_ambient and rid in ambient:
+                return False
+            if rid.lower() in excl_ids:
+                return False
+            t = (rule_title.get(rid) or "").lower()
+            return not any(term in t for term in excl_terms)
+
+        def _counts(comp: str) -> tuple[int, int, int, int]:
             sets = per_comp.get(comp, {"critical": set(), "high": set()})
-            def keep(rid: str, *, allow_ambient: bool) -> bool:
-                # allow_ambient=False → この severity では環境ノイズ割引を効かせない
-                if allow_ambient and rid in ambient:
-                    return False
-                if rid.lower() in excl_ids:
-                    return False
-                t = (rule_title.get(rid) or "").lower()
-                return not any(term in t for term in excl_terms)
-            # critical は自動割引の対象外 (手動 exclude リストのみ効く)。
-            crit = sum(1 for rid in sets.get("critical", ()) if keep(rid, allow_ambient=False))
-            high = sum(1 for rid in sets.get("high", ()) if keep(rid, allow_ambient=True))
-            return crit, high
+            # critical と高信頼ルールは自動割引の対象外 (手動 exclude のみ効く)。
+            crit_ids = [rid for rid in sets.get("critical", ())
+                        if _keep(rid, allow_ambient=False)]
+            high_ids = [rid for rid in sets.get("high", ())
+                        if _keep(rid, allow_ambient=(rid not in hc_rules))]
+            crit_hc = sum(1 for rid in crit_ids if rid in hc_rules)
+            high_hc = sum(1 for rid in high_ids if rid in hc_rules)
+            return len(crit_ids), len(high_ids), crit_hc, high_hc
 
         # 2. Display nickname = the label on that computer's latest job.
         nick_by_job: dict[str, str] = {}
@@ -965,7 +1049,9 @@ class Store:
             r["name"] = nick or comp or "(不明)"
             r["is_named"] = 1 if nick else 0
             # FP を除いた distinct rule 数でスコア (crit_rules/high_rules を上書き)
-            r["crit_rules"], r["high_rules"] = _counts(comp)
+            r["crit_rules"], r["high_rules"], r["crit_hc"], r["high_hc"] = _counts(comp)
+            # 高信頼 (実攻撃確認) の手口数 — UI バッジ用
+            r["hc_count"] = (r["crit_hc"] or 0) + (r["high_hc"] or 0)
             r["risk_score"] = self._risk_score(r)
         rows.sort(key=lambda r: r["risk_score"], reverse=True)
         for i, r in enumerate(rows, start=1):
@@ -987,13 +1073,23 @@ class Store:
           * high     : +12 each
           * medium/low: 0 (shown as counts only, never scored)
 
+        高信頼シグナル (実際の攻撃で確認された ATT&CK 技術 = high_confidence.txt
+        に一致) はさらに重く数える。「本物の侵害」を、たまたま鳴った high より
+        優先してスコアに反映させるため:
+          * 高信頼 critical : +45 each (通常 30 の 1.5倍)
+          * 高信頼 high     : +20 each (通常 12 の約1.7倍)
+
         A PC with no critical/high therefore scores ~0 regardless of how much
         log/medium noise it has. Same TP/FP and recency modifiers; linearly
         clipped to 100.
         """
         crit = row.get("crit_rules", 0) or 0
         high = row.get("high_rules", 0) or 0
-        points = crit * 30.0 + high * 12.0
+        crit_hc = min(row.get("crit_hc", 0) or 0, crit)
+        high_hc = min(row.get("high_hc", 0) or 0, high)
+        # 高信頼ぶんは上乗せ単価、それ以外は通常単価。
+        points = ((crit - crit_hc) * 30.0 + crit_hc * 45.0
+                  + (high - high_hc) * 12.0 + high_hc * 20.0)
 
         # TP/FP feedback adjustment. Symmetric: confirmed TPs raise, confirmed
         # FPs lower. Bounded.
@@ -1093,6 +1189,85 @@ class Store:
             "top_rules": [dict(r) for r in top_rules],
             "top_channels": [dict(r) for r in top_channels],
             "timeline": pivoted,
+        }
+
+    def attack_story(self, computer: str, include_suppressed: bool = False) -> dict:
+        """Reconstruct the ATT&CK kill-chain for one host.
+
+        Groups that host's critical/high detections by MITRE tactic, ordered
+        along the attack lifecycle (初期侵入 → 実行 → … → 影響). Each stage
+        lists the distinct techniques (rule titles) seen, whether each is a
+        high-confidence signal (matches a real-attack technique), and the
+        first/last time it fired — so the UI can draw "how the attack
+        progressed" as a left-to-right diagram.
+
+        Returns {computer, compromised, stages:[...], hc_total, tactic_count}.
+        A host with no critical/high has compromised=False and no stages.
+        """
+        c = self._conn()
+        where = " WHERE d.computer = ? AND d.level IN ('critical','high')"
+        params: list = [computer]
+        if not include_suppressed:
+            where += " AND s.id IS NULL"
+        hc_set = self._load_high_confidence()
+
+        # tactic -> technique_key -> aggregated info
+        stages: dict[str, dict[str, dict]] = {}
+        for r in c.execute(
+            "SELECT d.rule_id AS rule_id, d.rule_title AS title, d.level AS level, "
+            "       d.raw_json AS raw_json, d.ts AS ts "
+            "FROM detections d" + self._SUPP_JOIN + where, params):
+            try:
+                ev = json.loads(r["raw_json"]) or {}
+            except (ValueError, TypeError):
+                ev = {}
+            tactics = ev.get("MitreTactics") or []
+            tags = ev.get("MitreTags") or []
+            hc = self._tags_are_high_confidence(tags, hc_set)
+            if not tactics:
+                tactics = ["(不明)"]
+            title = r["title"] or r["rule_id"] or "(名称不明)"
+            key = r["rule_id"] or title
+            for tac in tactics:
+                bucket = stages.setdefault(tac, {})
+                info = bucket.get(key)
+                if info is None:
+                    bucket[key] = {
+                        "title": title, "level": r["level"],
+                        "techniques": sorted({str(t) for t in tags if t}),
+                        "high_confidence": hc, "count": 1,
+                        "first": r["ts"], "last": r["ts"],
+                    }
+                else:
+                    info["count"] += 1
+                    if r["ts"]:
+                        if not info["first"] or r["ts"] < info["first"]:
+                            info["first"] = r["ts"]
+                        if not info["last"] or r["ts"] > info["last"]:
+                            info["last"] = r["ts"]
+                    info["high_confidence"] = info["high_confidence"] or hc
+
+        # Order tactics along the kill chain; unknown tactics go last.
+        ordered = []
+        for tac, techs in stages.items():
+            order, ja = self.TACTIC_ORDER.get(tac, (99, tac))
+            items = sorted(techs.values(),
+                           key=lambda x: (not x["high_confidence"], x["first"] or ""))
+            ordered.append({
+                "tactic": tac, "tactic_ja": ja, "order": order,
+                "techniques": items,
+                "hc": any(t["high_confidence"] for t in items),
+            })
+        ordered.sort(key=lambda s: s["order"])
+
+        hc_total = sum(1 for s in ordered for t in s["techniques"]
+                       if t["high_confidence"])
+        return {
+            "computer": computer,
+            "compromised": bool(ordered),
+            "stages": ordered,
+            "hc_total": hc_total,
+            "tactic_count": len(ordered),
         }
 
     def rule_feedback(self) -> list[sqlite3.Row]:

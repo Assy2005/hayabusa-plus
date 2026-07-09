@@ -704,6 +704,79 @@ body.is-admin .is-admin-only { display: block !important; }
 .safe-list-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .safe-list-row .safe-rule { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ===== 高信頼シグナル (実攻撃で確認された手口) ===== */
+.hc-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 7px;
+  font-size: 11px; font-weight: 700; border-radius: 10px;
+  background: #7a0010; color: #fff; vertical-align: middle;
+}
+
+/* ===== 攻撃キルチェーン図 ===== */
+.killchain {
+  margin: 4px 0 12px; padding: 10px 12px;
+  border: 1px solid #E4B4B4; border-radius: 10px;
+  background: linear-gradient(180deg, #FFF3F3, var(--panel) 80%);
+}
+.kc-title { font-weight: 700; margin-bottom: 8px; }
+.kc-hc-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 8px;
+  font-size: 11px; font-weight: 700; border-radius: 10px;
+  background: #7a0010; color: #fff;
+}
+.kc-flow {
+  display: flex; align-items: stretch; gap: 6px;
+  overflow-x: auto; padding-bottom: 6px;
+}
+.kc-stage {
+  flex: 0 0 auto; min-width: 150px; max-width: 230px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); padding: 6px 8px;
+}
+.kc-stage-hc { border-color: #B30000; box-shadow: 0 0 0 1px #B3000033 inset; }
+.kc-stage-head {
+  font-weight: 700; font-size: 12px; margin-bottom: 6px;
+  padding-bottom: 4px; border-bottom: 1px dashed var(--line);
+}
+.kc-num {
+  display: inline-block; min-width: 18px; text-align: center;
+  background: var(--ink, #333); color: #fff; border-radius: 4px;
+  font-size: 11px; padding: 0 3px; margin-right: 4px;
+}
+.kc-stage-hc .kc-num { background: #B30000; }
+.kc-techs { display: flex; flex-direction: column; gap: 4px; }
+.kc-tech {
+  font-size: 12px; line-height: 1.3; padding: 3px 5px;
+  border-radius: 5px; background: #F4F5F7;
+  border-left: 3px solid #bbb;
+}
+.kc-tech.kc-critical { border-left-color: #B30000; background: #FBEAEA; }
+.kc-tech.kc-high { border-left-color: #E8720C; background: #FBF0E5; }
+.kc-tt { font-weight: 600; }
+.kc-ids { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
+.kc-hc { color: #B30000; font-weight: 700; margin-right: 3px; }
+.kc-arrow {
+  flex: 0 0 auto; align-self: center; color: #B30000;
+  font-size: 18px; font-weight: 700; padding: 0 1px;
+}
+
+/* ===== ランキング展開: ログごと説明 ===== */
+.rd-rule-head { display: flex; align-items: center; gap: 8px; }
+.rd-desc {
+  font-size: 12px; color: var(--muted); margin: 2px 0 0 2px;
+  line-height: 1.4;
+}
+.rd-attacks { margin-top: 3px; }
+.rd-attack {
+  display: inline-block; font-size: 10px; padding: 0 6px;
+  border: 1px solid var(--line); border-radius: 8px;
+  color: var(--muted); margin-right: 3px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .kc-tech { background: #23262e; }
+  .killchain { background: #2a1e1e; border-color: #5a2a2a; }
+}
+
 /* tutorial + fixed-settings cards stack as blocks, not flex rows */
 body.public-mode .pub-tutorial, body.public-mode .pub-fixed { display: block !important; }
 .pub-tutorial {

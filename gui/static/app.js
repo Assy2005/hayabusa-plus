@@ -2438,13 +2438,16 @@ console.log("[app] app.js v2026-05-21-c executing");
         const badge = champion
           ? `<span class="danger-badge">☣️ 最も危険なPC</span>`
           : (infect === 3 ? `<span class="danger-badge sm">感染の疑い</span>` : "");
+        // 実際の攻撃で確認された手口の数 (高信頼シグナル)。
+        const hcBadge = (x.hc_count || 0) > 0
+          ? `<span class="hc-badge" title="実際の攻撃サンプルで確認された手口">☣ 実攻撃 ${x.hc_count}</span>` : "";
 
         return `<div class="rank-item${champion ? " is-champion" : ""}" data-computer="${escapeHtml(x.computer || "")}">
           <div class="${cls.join(" ")}" role="button" tabindex="0" aria-expanded="false" title="クリックで危険の内訳を表示">
             ${bugs ? `<div class="vbug-layer" aria-hidden="true">${bugs}</div>` : ""}
             <div class="rank-no">${medal}</div>
             <div class="rank-main">
-              <div class="rank-name">${escapeHtml(x.name || "(不明)")}${src}${badge}</div>
+              <div class="rank-name">${escapeHtml(x.name || "(不明)")}${src}${badge}${hcBadge}</div>
               <div class="rank-sev">
                 <span class="rank-chip c">critical ${x.critical_n || 0}</span>
                 <span class="rank-chip h">high ${x.high_n || 0}</span>
@@ -2468,6 +2471,38 @@ console.log("[app] app.js v2026-05-21-c executing");
   const LEVEL_JA = { critical: "緊急", high: "高", medium: "中", low: "低", informational: "情報" };
 
   // 行をクリック → そのPCの「危険の内訳」(検知ルール上位) を遅延ロードして展開。
+  // 攻撃のキルチェーン図。侵害が疑われる (crit/high がある) 場合のみ、
+  // 検知した手口を ATT&CK の段階順 (初期侵入→…→影響) に左から右へ並べ、
+  // 「攻撃がどう進んだか」を1枚で見せる。攻撃が無ければ何も描かない。
+  function renderKillChain(story) {
+    if (!story || !story.compromised || !(story.stages || []).length) return "";
+    const stageHtml = story.stages.map((s, idx) => {
+      const techs = (s.techniques || []).map(t => {
+        const lv = (t.level || "").toLowerCase();
+        const hc = t.high_confidence
+          ? `<span class="kc-hc" title="実際の攻撃で確認された手口">☣</span>` : "";
+        const ids = (t.techniques || []).length
+          ? `<span class="kc-ids">${escapeHtml(t.techniques.join(", "))}</span>` : "";
+        return `<div class="kc-tech kc-${escapeHtml(lv)}">
+            ${hc}<span class="kc-tt">${escapeHtml(t.title)}</span>${ids}
+          </div>`;
+      }).join("");
+      const arrow = idx < story.stages.length - 1
+        ? `<div class="kc-arrow" aria-hidden="true">➜</div>` : "";
+      return `<div class="kc-stage${s.hc ? " kc-stage-hc" : ""}">
+          <div class="kc-stage-head"><span class="kc-num">${s.order}</span> ${escapeHtml(s.tactic_ja)}</div>
+          <div class="kc-techs">${techs}</div>
+        </div>${arrow}`;
+    }).join("");
+    const hcBadge = story.hc_total
+      ? `<span class="kc-hc-badge">☣ 実攻撃で確認された手口 ${story.hc_total} 件</span>` : "";
+    return `<div class="killchain">
+        <div class="kc-title">🧬 攻撃の流れ（ATT&amp;CK キルチェーン） ${hcBadge}
+          <span class="muted small">— 検知した手口を攻撃の段階順に並べています</span></div>
+        <div class="kc-flow">${stageHtml}</div>
+      </div>`;
+  }
+
   async function toggleRankingDetail(item) {
     const row = item.querySelector(".rank-row");
     const panel = item.querySelector(".rank-detail");
@@ -2484,8 +2519,12 @@ console.log("[app] app.js v2026-05-21-c executing");
     panel.innerHTML = `<div class="muted small" style="padding:10px 14px">読込中…</div>`;
     const comp = item.dataset.computer || "";
     try {
-      const r = await fetch(`/api/hosts/${encodeURIComponent(comp)}`);
+      const [r, sr] = await Promise.all([
+        fetch(`/api/hosts/${encodeURIComponent(comp)}`),
+        fetch(`/api/hosts/${encodeURIComponent(comp)}/attack_story`),
+      ]);
       const d = await r.json();
+      const story = await sr.json().catch(() => null);
       if (d.error) { panel.innerHTML = `<div class="muted small" style="padding:10px 14px">取得に失敗: ${escapeHtml(d.error)}</div>`; return; }
       const rules = d.top_rules || [];
       const chans = d.top_channels || [];
@@ -2494,23 +2533,32 @@ console.log("[app] app.js v2026-05-21-c executing");
         panel.dataset.loaded = "1";
         return;
       }
+      // 各手口に平易な説明（サーバがルール説明を付与）を添える = ログごと説明。
       const ruleRows = rules.map(rr => {
         const lv = (rr.level || "").toLowerCase();
         const ja = LEVEL_JA[lv] || rr.level || "";
+        const desc = (rr.description || "").trim();
+        const tags = (rr.attack_tags || []).slice(0, 4)
+          .map(t => `<span class="rd-attack">${escapeHtml(t)}</span>`).join(" ");
         return `<div class="rd-rule">
-          <span class="lvl lvl-${escapeHtml(lv)}">${escapeHtml(ja)}</span>
-          <span class="rd-title">${escapeHtml(rr.rule_title || rr.rule_id || "(名称不明)")}</span>
-          <span class="rd-count">${(rr.n || 0).toLocaleString()} 件</span>
+          <div class="rd-rule-head">
+            <span class="lvl lvl-${escapeHtml(lv)}">${escapeHtml(ja)}</span>
+            <span class="rd-title">${escapeHtml(rr.rule_title || rr.rule_id || "(名称不明)")}</span>
+            <span class="rd-count">${(rr.n || 0).toLocaleString()} 件</span>
+          </div>
+          ${desc ? `<div class="rd-desc">${escapeHtml(desc)}</div>` : ""}
+          ${tags ? `<div class="rd-attacks">${tags}</div>` : ""}
         </div>`;
       }).join("");
       const chanLine = chans.length
         ? `<div class="rd-chans">記録源: ${chans.map(c => `${escapeHtml(c.channel)} (${c.n})`).join(" ・ ")}</div>`
         : "";
       panel.innerHTML = `<div class="rank-detail-inner">
-          <div class="rd-head">このパソコンで見つかった“あやしい動き” 上位 ${rules.length} 件</div>
+          ${renderKillChain(story)}
+          <div class="rd-head">このパソコンで見つかった“あやしい動き” 上位 ${rules.length} 件 <span class="muted small">— 各行に「なにをする手口か」を表示</span></div>
           ${ruleRows}
           ${chanLine}
-          <div class="rd-note">数字は当てはまった回数です（回数はスコアに影響しません）。スコアは <b>緊急/高 の“異なる手口の数”</b>で決まります。</div>
+          <div class="rd-note">数字は当てはまった回数です（回数はスコアに影響しません）。スコアは <b>緊急/高 の“異なる手口の数”</b>で決まり、<b>☣ 実攻撃で確認された手口</b>は特に重く数えます。</div>
         </div>`;
       panel.dataset.loaded = "1";
     } catch (e) {
