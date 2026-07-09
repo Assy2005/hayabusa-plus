@@ -832,6 +832,13 @@ ul.ptree ul.ptree { margin-left: 18px; padding-left: 14px; border-left: 2px soli
 }
 
 /* ===== 「何が実行したか」帯 (検知詳細の先頭) ===== */
+.explain-narr {
+  margin: 0 0 10px; padding: 10px 12px;
+  border: 1px solid var(--line); border-left: 4px solid #2b6cb0;
+  border-radius: 8px; background: #EEF4FB;
+}
+.explain-narr .en-k { display: block; font-weight: 700; margin-bottom: 3px; }
+.explain-narr .en-v { line-height: 1.5; }
 .actor-block {
   margin: 0 0 12px; padding: 10px 12px;
   border: 1px solid var(--line); border-left: 4px solid #1a7f4b;

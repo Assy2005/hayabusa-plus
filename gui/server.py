@@ -1079,6 +1079,11 @@ class Handler(BaseHTTPRequestHandler):
             # 「何が実行したか」= このログの実行プログラム/コマンド/ユーザーを正規化。
             actor = STORE._extract_actor(
                 event.get("Details"), event.get("ExtraFieldInfo"))
+            # 「このログが実際に何をしたか」を平易な日本語1文で。
+            tactics = event.get("MitreTactics") or []
+            narrative = STORE._narrative(
+                tactics[0] if tactics else "",
+                event.get("MitreTags") or [], actor)
             self._send_json({
                 "detection": event,
                 "rule": rule_meta,
@@ -1086,6 +1091,7 @@ class Handler(BaseHTTPRequestHandler):
                 "related": related,
                 "rule_history": history,
                 "actor": actor,
+                "narrative": narrative,
             })
             return
 

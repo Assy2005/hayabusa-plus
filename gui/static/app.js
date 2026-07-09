@@ -972,9 +972,15 @@ console.log("[app] app.js v2026-05-21-c executing");
     const ruleId = detail?.detection?._rule_id || ev._rule_id || "";
     const ruleTitle = ev.RuleTitle || detail?.rule?.title || detail?.detection?.RuleTitle || "";
     const actorHtml = renderActor(detail?.actor);
+    // 「このログが実際に何をしたか」の平易な日本語1文（サーバ生成）。
+    const narrHtml = detail?.narrative
+      ? `<div class="explain-narr"><span class="en-k">📖 このログがしたこと</span>
+           <span class="en-v">${escapeHtml(detail.narrative)}</span></div>`
+      : "";
 
     explain.innerHTML = `
       <div class="explain-block">
+        ${narrHtml}
         ${actorHtml}
         <div class="explain-grid">
           <div class="explain-col">
