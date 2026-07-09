@@ -2779,7 +2779,12 @@ console.log("[app] app.js v2026-05-21-c executing");
 
   { const rl = $("#ranking-list"); if (rl) {
       rl.addEventListener("click", (e) => {
-        const item = e.target.closest(".rank-item");
+        // 展開パネル内のクリック（details の開閉・ボタン・リンク等）は
+        // 親パネルを閉じない。トグルするのはヘッダ行だけ。
+        if (e.target.closest(".rank-detail")) return;
+        const row = e.target.closest(".rank-row");
+        if (!row) return;
+        const item = row.closest(".rank-item");
         if (item && rl.contains(item)) toggleRankingDetail(item);
       });
       rl.addEventListener("keydown", (e) => {
