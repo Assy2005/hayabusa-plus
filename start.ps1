@@ -32,6 +32,37 @@ if ($Public) {
     Write-Host ("    Allow inbound TCP port {0} in Windows Firewall." -f $env:HAYABUSA_GUI_PORT) -ForegroundColor Yellow
 }
 
+# --- Make sure the preferred port is free so we don't drift to a random one.
+# The usual cause of "the port changes every launch" is a leftover server:
+#   (a) a zombie Windows python still running gui/server.py, or
+#   (b) a server left running INSIDE WSL, which WSL mirrors onto Windows
+#       127.0.0.1:<port> via wslrelay.exe (localhost forwarding).
+# We only stop OUR OWN server; anything else we just warn about.
+$preferred = [int]$env:HAYABUSA_GUI_PORT
+$holderPid = $null
+try {
+    $holderPid = (Get-NetTCPConnection -LocalPort $preferred -State Listen -ErrorAction Stop |
+                  Select-Object -First 1).OwningProcess
+} catch {}
+if ($holderPid) {
+    $holder = Get-Process -Id $holderPid -ErrorAction SilentlyContinue
+    $ours = Get-CimInstance Win32_Process -Filter "ProcessId=$holderPid" -ErrorAction SilentlyContinue
+    if ($ours -and $ours.CommandLine -like '*server.py*') {
+        Write-Host ("Freeing port {0}: stopping a previous server (PID {1})." -f $preferred, $holderPid) -ForegroundColor Yellow
+        Stop-Process -Id $holderPid -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+    }
+    elseif ($holder -and $holder.ProcessName -eq 'wslrelay') {
+        Write-Host ("Port {0} is held by a leftover server inside WSL. Stopping it." -f $preferred) -ForegroundColor Yellow
+        try { wsl.exe -e sh -c "pkill -f 'gui/server.py' 2>/dev/null; fuser -k $preferred/tcp 2>/dev/null; true" | Out-Null } catch {}
+        Start-Sleep -Seconds 1
+    }
+    else {
+        $hn = if ($holder) { $holder.ProcessName } else { 'another process' }
+        Write-Host ("Note: port {0} is in use by {1} (PID {2}); a different port will be chosen." -f $preferred, $hn, $holderPid) -ForegroundColor Yellow
+    }
+}
+
 $workspace = Join-Path $here 'workspace'
 New-Item -ItemType Directory -Path $workspace -Force | Out-Null
 $portFile = Join-Path $workspace '.port'
