@@ -769,43 +769,81 @@ body.is-admin .is-admin-only { display: block !important; }
 
 /* ===== プロセスツリー ===== */
 .proctree-host { overflow-x: auto; }
+/* ===== プロセスツリー（見やすさ重視の再設計） ===== */
+/* 冒頭の「起動の連鎖」1行サマリ */
+.pt-summary {
+  margin: 2px 0 12px; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid var(--line); border-left: 4px solid #2b6cb0;
+  background: #EEF4FB; font-weight: 700;
+}
+.pt-chain-item { }
+.pt-chain-arrow { color: #2b6cb0; margin: 0 5px; font-weight: 700; }
+
 ul.ptree { list-style: none; margin: 0; padding-left: 0; }
-ul.ptree ul.ptree { margin-left: 18px; padding-left: 14px; border-left: 2px solid var(--line); }
-.pt-node { margin: 3px 0; }
+/* 子は左に寄せ、縦ガイド線で親子を明示 */
+ul.ptree ul.ptree { margin-left: 20px; padding-left: 16px; border-left: 2px solid var(--line); }
+.pt-node { margin: 4px 0; position: relative; }
+
 .pt-row {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px;
-  background: var(--panel); width: fit-content; max-width: 100%;
+  padding: 4px 2px;
 }
-/* 検知ノードは「左の太い色帯」だけで severity を示す（べた塗りしない）。 */
-.pt-node-hit > .pt-row { border-left-width: 4px; }
-.pt-node-hit.pt-lv-critical > .pt-row { border-left-color: #B30000; }
-.pt-node-hit.pt-lv-high    > .pt-row { border-left-color: #E8720C; }
-.pt-node-hit.pt-lv-medium  > .pt-row { border-left-color: #C9A227; }
-.pt-node-hit.pt-lv-low     > .pt-row { border-left-color: #2f9e63; }
+/* プロセス名の前の丸（重要度色 or グレー） */
+.pt-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto;
+  background: #888; box-shadow: 0 0 0 2px var(--panel);
+}
+.pt-dot-plain { background: #c3c7ce; }
+.pt-node-hit.pt-lv-critical .pt-dot { background: #B30000; }
+.pt-node-hit.pt-lv-high    .pt-dot { background: #E8720C; }
+.pt-node-hit.pt-lv-medium  .pt-dot { background: #C9A227; }
+.pt-node-hit.pt-lv-low     .pt-dot { background: #2f9e63; }
+
 .pt-img { font-weight: 700; }
-.pt-hit {
-  font-size: 11px; font-weight: 700; padding: 0 7px; border-radius: 10px;
+.pt-node-hit > .pt-row .pt-img { color: var(--ink, #1a1a1a); }
+/* 検知していない/合成の中間プロセスは控えめに */
+.pt-clean > .pt-row .pt-img,
+.pt-synth > .pt-row .pt-img { font-weight: 500; color: var(--muted); }
+
+.pt-sev {
+  font-size: 11px; font-weight: 700; padding: 0 8px; border-radius: 10px;
   color: #fff; background: #888;
 }
-.pt-hit.lvl-critical { background: #B30000; }
-.pt-hit.lvl-high { background: #E8720C; }
-.pt-hit.lvl-medium { background: #C9A227; }
-.pt-hit.lvl-low { background: #2f9e63; }
-.pt-user, .pt-pid, .pt-when { font-size: 11px; color: var(--muted); }
-.pt-cmd { margin: 2px 0 2px 12px; font-size: 12px; word-break: break-all; }
-.pt-cmd code {
-  background: rgba(0,0,0,.05); padding: 1px 6px; border-radius: 4px;
-  color: var(--ink, #333);
-}
-/* 合成した親（記録外の起動元）は控えめに。系譜を示すだけ。 */
-.pt-synth > .pt-row { opacity: .7; border-style: dashed; }
+.pt-sev.lv-critical { background: #B30000; }
+.pt-sev.lv-high { background: #E8720C; }
+.pt-sev.lv-medium { background: #C9A227; }
+.pt-sev.lv-low { background: #2f9e63; }
+.pt-rule { }
 .pt-tag-parent {
   font-size: 10px; padding: 0 6px; border-radius: 8px;
   background: #e6e8ec; color: #555;
 }
-.pt-clickable { cursor: pointer; }
-.pt-clickable:hover { outline: 2px solid rgba(43,108,176,.35); outline-offset: 1px; }
+.pt-pid { font-size: 11px; color: var(--muted); }
+
+/* 「何をしたか」= 検知ノードの日本語1文（主役） */
+.pt-narr {
+  margin: 1px 0 1px 18px; font-weight: 600; line-height: 1.4;
+  padding-left: 8px; border-left: 3px solid var(--line);
+}
+.pt-node-hit.pt-lv-critical > .pt-narr { border-left-color: #B30000; }
+.pt-node-hit.pt-lv-high    > .pt-narr { border-left-color: #E8720C; }
+.pt-node-hit.pt-lv-medium  > .pt-narr { border-left-color: #C9A227; }
+.pt-node-hit.pt-lv-low     > .pt-narr { border-left-color: #2f9e63; }
+.pt-meta { margin: 1px 0 1px 26px; }
+.pt-cmd { margin: 2px 0 4px 26px; font-size: 12px; word-break: break-all; }
+.pt-cmd code {
+  background: rgba(0,0,0,.05); padding: 1px 6px; border-radius: 4px;
+  color: var(--ink, #333);
+}
+
+.pt-clickable { cursor: pointer; border-radius: 6px; }
+.pt-clickable:hover { background: rgba(43,108,176,.08); }
+
+@media (prefers-color-scheme: dark) {
+  .pt-summary { background: #16202c; }
+  .pt-cmd code { background: rgba(255,255,255,.08); color: #ddd; }
+  .pt-tag-parent { background: #2a2f3a; color: #ccd; }
+}
 
 /* 検知の前後のログ（時系列コンテキスト） */
 .explain-around { margin: 10px 0; }

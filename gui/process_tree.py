@@ -331,6 +331,20 @@ def build_tree(store, job_id: str, line_no: int,
     }
 
 
+def _basename(path: str) -> str:
+    """`"C:\\dir\\app.exe" --flag` → `app.exe`。実行ファイル名だけ抜く。"""
+    s = str(path or "").strip()
+    if not s:
+        return ""
+    if s[0] in "\"'":
+        end = s.find(s[0], 1)
+        s = s[1:end] if end > 0 else s[1:]
+    else:
+        s = s.split(" ")[0]
+    s = s.replace("\\", "/").rstrip("/")
+    return s.rsplit("/", 1)[-1] or s
+
+
 def _proc_record_any(raw_json_str: str) -> dict[str, Any] | None:
     """Extract a process-create record from a Sysmon EID 1 *or* a Windows
     Security EID 4688 event. Returns a normalised dict or None.
@@ -382,6 +396,9 @@ def _proc_record_any(raw_json_str: str) -> dict[str, Any] | None:
     if not rec["pid"] and not rec["guid"]:
         return None
     rec["_ts"] = ev.get("Timestamp")
+    # ATT&CK タグ/戦術（あれば）— 検知ノードの日本語説明生成に使う。
+    rec["_tags"] = ev.get("MitreTags") or []
+    rec["_tactics"] = ev.get("MitreTactics") or []
     return rec
 
 
@@ -413,6 +430,20 @@ def build_host_tree(store, computer: str, job_id: str | None = None,
             continue
         guid = rec["guid"]
         pid = rec["pid"]
+        # 検知プロセスは「何をしたか」の平易な日本語1文を付ける（ストーリーと同じ）。
+        narrative = ""
+        if row["rule_id"]:
+            actor = {
+                "program": _basename(rec["image"]), "program_full": rec["image"],
+                "command": rec["cmdline"], "user": rec["user"],
+                "parent": _basename(rec["parent_image"]), "pid": pid, "service": "",
+            }
+            tactics = rec.get("_tactics") or []
+            try:
+                narrative = store._narrative(
+                    tactics[0] if tactics else "", rec.get("_tags") or [], actor)
+            except Exception:
+                narrative = ""
         node = {
             "guid": guid, "pid": pid,
             "image": rec["image"], "cmdline": rec["cmdline"],
@@ -423,7 +454,7 @@ def build_host_tree(store, computer: str, job_id: str | None = None,
             "detection": {
                 "job_id": row["job_id"], "line_no": row["line_no"],
                 "level": row["level"], "rule_title": row["rule_title"],
-                "rule_id": row["rule_id"],
+                "rule_id": row["rule_id"], "narrative": narrative,
             } if row["rule_id"] else None,
             "children": [],
         }

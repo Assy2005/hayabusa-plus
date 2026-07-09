@@ -2892,48 +2892,82 @@ console.log("[app] app.js v2026-05-21-c executing");
       return;
     }
     if (cnt) cnt.textContent = `— ${d.nodes_seen} プロセス${d.truncated ? "（上限で一部省略）" : ""}・キー: ${d.key_mode === "guid" ? "Sysmon GUID" : "PID"}`;
-    host.innerHTML = `<ul class="ptree">${d.roots.map(renderProcNode).join("")}</ul>`;
+    // 冒頭に「起動の連鎖」を1行で（最長パス）。何が何を起動したか一目で。
+    const chain = procChainSummary(d.roots);
+    const chainHtml = chain.length > 1
+      ? `<div class="pt-summary">🔗 起動の連鎖：${chain.map((p, i) =>
+          `<span class="pt-chain-item">${escapeHtml(p)}</span>`).join('<span class="pt-chain-arrow">→</span>')}</div>`
+      : "";
+    host.innerHTML = `${chainHtml}<ul class="ptree">${d.roots.map(renderProcNode).join("")}</ul>`;
   }
 
   function renderProcNode(node) {
     const img = node.image ? procBasename(node.image) : "(不明なプロセス)";
     const kids = (node.children || []).length
       ? `<ul class="ptree">${node.children.map(renderProcNode).join("")}</ul>` : "";
+    const pidTxt = node.pid ? `PID ${escapeHtml(String(node.pid))}` : "";
 
-    // 合成した親（このファイルには検知として記録されていない起動元）。
-    // 系譜を示すためだけの控えめなノード。
+    // 合成した親（記録外の起動元）: 系譜を示すためだけの控えめなノード。
     if (node.synthetic) {
-      const pid = node.pid ? `<span class="pt-pid">PID ${escapeHtml(String(node.pid))}</span>` : "";
       return `<li class="pt-node pt-synth">
           <div class="pt-row">
-            <span class="pt-img">🖥 ${escapeHtml(img)}</span>
-            <span class="pt-tag-parent">起動元</span>${pid}
+            <span class="pt-dot pt-dot-plain"></span>
+            <span class="pt-img">${escapeHtml(img)}</span>
+            <span class="pt-tag-parent">起動元</span>
+            ${pidTxt ? `<span class="pt-pid">${pidTxt}</span>` : ""}
           </div>
           ${kids}
         </li>`;
     }
 
     const hit = node.detection;
-    const lv = hit ? (hit.level || "").toLowerCase() : "";
-    const badge = hit
-      ? `<span class="pt-hit lvl-${escapeHtml(lv)}" title="クリックで詳細">⚑ ${escapeHtml(LEVEL_JA[lv] || lv)}: ${escapeHtml(hit.rule_title || "検知")}</span>`
-      : "";
-    const user = node.user ? `<span class="pt-user">👤 ${escapeHtml(node.user)}</span>` : "";
-    const pid = node.pid ? `<span class="pt-pid">PID ${escapeHtml(String(node.pid))}</span>` : "";
-    const when = node.ts ? `<span class="pt-when">🕒 ${escapeHtml(fmtWhen(node.ts))}</span>` : "";
     const cmd = node.cmdline && node.cmdline !== node.image
-      ? `<div class="pt-cmd"><code>${escapeHtml(node.cmdline.length > 300 ? node.cmdline.slice(0,300) + "…" : node.cmdline)}</code></div>` : "";
-    // 検知ノードはクリックで結果タブへジャンプできるように job/line を持たせる。
-    const dataAttr = hit
-      ? ` data-job="${escapeHtml(hit.job_id || "")}" data-line="${escapeHtml(String(hit.line_no != null ? hit.line_no : ""))}"` : "";
-    return `<li class="pt-node${hit ? " pt-node-hit pt-lv-" + escapeHtml(lv) : ""}">
-        <div class="pt-row${hit ? " pt-clickable" : ""}"${dataAttr}>
-          <span class="pt-img">🖥 ${escapeHtml(img)}</span>
-          ${badge}${user}${pid}${when}
+      ? `<div class="pt-cmd"><code>${escapeHtml(node.cmdline.length > 240 ? node.cmdline.slice(0,240) + "…" : node.cmdline)}</code></div>` : "";
+
+    // 検知が無い中間プロセス（起動しただけ）: 控えめに。
+    if (!hit) {
+      const meta = [node.user ? "👤 " + escapeHtml(node.user) : "", node.ts ? "🕒 " + escapeHtml(fmtWhen(node.ts)) : "", pidTxt]
+        .filter(Boolean).join(" ・ ");
+      return `<li class="pt-node pt-clean">
+          <div class="pt-row">
+            <span class="pt-dot pt-dot-plain"></span>
+            <span class="pt-img">${escapeHtml(img)}</span>
+            ${meta ? `<span class="pt-meta muted small">${meta}</span>` : ""}
+          </div>
+          ${cmd}${kids}
+        </li>`;
+    }
+
+    // 検知プロセス: プログラム名＋重要度、その下に「何をしたか」を日本語で。
+    const lv = (hit.level || "").toLowerCase();
+    const sev = `<span class="pt-sev lv-${escapeHtml(lv)}">${escapeHtml(LEVEL_JA[lv] || lv)}</span>`;
+    const narr = `<div class="pt-narr">${escapeHtml(hit.narrative || hit.rule_title || "不審な動作")}</div>`;
+    const meta = [node.user ? "👤 " + escapeHtml(node.user) : "", node.ts ? "🕒 " + escapeHtml(fmtWhen(node.ts)) : "", pidTxt]
+      .filter(Boolean).join(" ・ ");
+    const dataAttr = ` data-job="${escapeHtml(hit.job_id || "")}" data-line="${escapeHtml(String(hit.line_no != null ? hit.line_no : ""))}"`;
+    return `<li class="pt-node pt-node-hit pt-lv-${escapeHtml(lv)}">
+        <div class="pt-row pt-clickable"${dataAttr} title="クリックで詳細（結果タブ）">
+          <span class="pt-dot"></span>
+          <span class="pt-img">${escapeHtml(img)}</span>${sev}
+          <span class="pt-rule muted small">${escapeHtml(hit.rule_title || "")}</span>
         </div>
+        ${narr}
+        ${meta ? `<div class="pt-meta muted small">${meta}</div>` : ""}
         ${cmd}
         ${kids}
       </li>`;
+  }
+
+  // ツリーの最長パス（起動元→…→末端）を「a.exe → b.exe → c.exe」でまとめる。
+  function procChainSummary(roots) {
+    let best = [];
+    const walk = (n, path) => {
+      const p = path.concat(n.image ? procBasename(n.image) : "(不明)");
+      if (!(n.children || []).length) { if (p.length > best.length) best = p; }
+      else (n.children || []).forEach(c => walk(c, p));
+    };
+    (roots || []).forEach(r => walk(r, []));
+    return best;
   }
 
   function procBasename(p) {
