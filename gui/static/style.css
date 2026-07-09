@@ -787,11 +787,12 @@ ul.ptree ul.ptree { margin-left: 18px; padding-left: 14px; border-left: 2px soli
   padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px;
   background: var(--panel); width: fit-content; max-width: 100%;
 }
-.pt-node-hit > .pt-row { border-width: 2px; }
-.pt-node-hit.lvl-critical > .pt-row { border-color: #B30000; background: #FBEAEA; }
-.pt-node-hit.lvl-high > .pt-row { border-color: #E8720C; background: #FBF0E5; }
-.pt-node-hit.lvl-medium > .pt-row { border-color: #C9A227; background: #FCF7E3; }
-.pt-node-hit.lvl-low > .pt-row { border-color: #3a8; background: #EAF7F0; }
+/* 検知ノードは「左の太い色帯」だけで severity を示す（べた塗りしない）。 */
+.pt-node-hit > .pt-row { border-left-width: 4px; }
+.pt-node-hit.pt-lv-critical > .pt-row { border-left-color: #B30000; }
+.pt-node-hit.pt-lv-high    > .pt-row { border-left-color: #E8720C; }
+.pt-node-hit.pt-lv-medium  > .pt-row { border-left-color: #C9A227; }
+.pt-node-hit.pt-lv-low     > .pt-row { border-left-color: #2f9e63; }
 .pt-img { font-weight: 700; }
 .pt-hit {
   font-size: 11px; font-weight: 700; padding: 0 7px; border-radius: 10px;
@@ -803,15 +804,16 @@ ul.ptree ul.ptree { margin-left: 18px; padding-left: 14px; border-left: 2px soli
 .pt-hit.lvl-low { background: #2f9e63; }
 .pt-user, .pt-pid, .pt-when { font-size: 11px; color: var(--muted); }
 .pt-cmd { margin: 2px 0 2px 12px; font-size: 12px; word-break: break-all; }
-.pt-cmd code { background: rgba(0,0,0,.05); padding: 1px 6px; border-radius: 4px; }
+.pt-cmd code {
+  background: rgba(0,0,0,.05); padding: 1px 6px; border-radius: 4px;
+  color: var(--ink, #333);
+}
 .pt-legend-hit {
   display: inline-block; padding: 0 6px; border: 2px solid #E8720C;
   border-radius: 6px; background: #FBF0E5;
 }
 @media (prefers-color-scheme: dark) {
-  .pt-node-hit.lvl-critical > .pt-row { background: #2a1414; }
-  .pt-node-hit.lvl-high > .pt-row { background: #2a1e12; }
-  .pt-cmd code { background: rgba(255,255,255,.08); }
+  .pt-cmd code { background: rgba(255,255,255,.08); color: #ddd; }
 }
 .kc-arrow {
   flex: 0 0 auto; align-self: center; color: #B30000;

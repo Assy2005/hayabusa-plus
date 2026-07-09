@@ -2749,7 +2749,7 @@ console.log("[app] app.js v2026-05-21-c executing");
       ? `<div class="pt-cmd"><code>${escapeHtml(node.cmdline.length > 300 ? node.cmdline.slice(0,300) + "…" : node.cmdline)}</code></div>` : "";
     const kids = (node.children || []).length
       ? `<ul class="ptree">${node.children.map(renderProcNode).join("")}</ul>` : "";
-    return `<li class="pt-node${hit ? " pt-node-hit lvl-" + escapeHtml(lv) : ""}">
+    return `<li class="pt-node${hit ? " pt-node-hit pt-lv-" + escapeHtml(lv) : ""}">
         <div class="pt-row">
           <span class="pt-img">🖥 ${escapeHtml(img)}</span>
           ${badge}${user}${pid}${when}
