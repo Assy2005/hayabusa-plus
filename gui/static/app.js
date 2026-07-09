@@ -2550,6 +2550,83 @@ console.log("[app] app.js v2026-05-21-c executing");
 
   const LEVEL_JA = { critical: "緊急", high: "高", medium: "中", low: "低", informational: "情報" };
 
+  const SEV_RANK = { critical: 3, high: 2, medium: 1, low: 0, informational: -1 };
+
+  // ★ 攻撃ストーリー（時系列タイムライン）= 主役ビュー。
+  // 「いつ・誰が・何をしたか」を1文ずつ、時刻順に上から下へ読める形にする。
+  // 同じ手口が複数の戦術にまたがって重複表示されるのを1つにまとめる。
+  function renderAttackStory(story) {
+    if (!story || !story.compromised || !(story.stages || []).length) return "";
+    // 1. 全手口を1件ずつのイベントに展開し、説明文(なければ手口名)で重複排除。
+    const byKey = new Map();
+    story.stages.forEach(s => (s.techniques || []).forEach(t => {
+      const key = (t.narrative || t.title || "").trim() || (t.techniques || []).join(",");
+      const lv = (t.level || "").toLowerCase();
+      const prev = byKey.get(key);
+      const ev = {
+        ts: t.first || "", tac: s.tactic_ja, order: s.order, level: lv,
+        narrative: t.narrative || t.title || "(不明な手口)",
+        title: t.title || "", ids: (t.techniques || []).join(", "),
+        program: (t.programs || []).filter(Boolean)[0] || "",
+        hc: !!t.high_confidence, count: t.count || 1, tacs: new Set([s.tactic_ja]),
+      };
+      if (!prev) { byKey.set(key, ev); return; }
+      // まとめる: 最も早い時刻・最も重い重要度・件数合算・戦術を集約。
+      if (ev.ts && (!prev.ts || ev.ts < prev.ts)) { prev.ts = ev.ts; prev.order = ev.order; }
+      if ((SEV_RANK[ev.level] ?? -2) > (SEV_RANK[prev.level] ?? -2)) prev.level = ev.level;
+      prev.count += ev.count; prev.hc = prev.hc || ev.hc;
+      if (!prev.program && ev.program) prev.program = ev.program;
+      prev.tacs.add(s.tactic_ja);
+    }));
+    const events = [...byKey.values()].sort((a, b) =>
+      (a.ts && b.ts) ? String(a.ts).localeCompare(String(b.ts)) : (a.order - b.order));
+    if (!events.length) return "";
+
+    // 2. 冒頭サマリ: 戦術の流れ・時間帯・最悪の手口を1〜2文で。
+    const tacSeq = [];
+    events.forEach(e => { if (!tacSeq.includes(e.tac)) tacSeq.push(e.tac); });
+    const times = events.map(e => e.ts).filter(Boolean).sort();
+    const span = times.length
+      ? (fmtWhen(times[0]) + (times.length > 1 ? " 〜 " + fmtWhen(times[times.length - 1]) : ""))
+      : "";
+    const worst = events.slice().sort((a, b) => (SEV_RANK[b.level] ?? -2) - (SEV_RANK[a.level] ?? -2))[0];
+    const tone = worst && worst.level === "critical" ? "crit" : "high";
+    const hcNote = story.hc_total ? `実際の攻撃で確認された手口が <b>${story.hc_total}</b> 件。` : "";
+    const summary = `<div class="story-summary tone-${tone}">
+        <div class="ss-title">⚠ このPCで攻撃の連鎖を検知しました</div>
+        <div class="ss-flow">${tacSeq.map(escapeHtml).join(' <span class="ss-arrow">→</span> ')}</div>
+        <div class="ss-sub muted small">${span ? "発生時間帯: <b>" + escapeHtml(span) + "</b>。 " : ""}${hcNote}
+          いちばん危険: <b>${escapeHtml(worst ? worst.narrative : "")}</b></div>
+      </div>`;
+
+    // 3. 時系列タイムライン。各ステップ = 時刻＋日本語1文＋実行プログラム。
+    const steps = events.map(e => {
+      const ja = LEVEL_JA[e.level] || e.level || "";
+      const hc = e.hc ? `<span class="st-hc" title="実際の攻撃で確認された手口">☣</span>` : "";
+      const cnt = e.count > 1 ? `<span class="st-count">×${e.count}</span>` : "";
+      const prog = e.program ? `<span class="st-prog">🖥 ${escapeHtml(e.program)}</span>` : "";
+      const ids = e.ids ? `<span class="st-ids" title="${escapeHtml(e.title)}">${escapeHtml(e.ids)}</span>` : "";
+      return `<li class="story-step lv-${escapeHtml(e.level)}">
+          <div class="st-rail"><span class="st-dot"></span></div>
+          <div class="st-body">
+            <div class="st-top">
+              <span class="st-time">🕒 ${escapeHtml(e.ts ? fmtWhen(e.ts) : "時刻不明")}</span>
+              <span class="st-tac lv-${escapeHtml(e.level)}">${escapeHtml(e.tac)}</span>
+              <span class="st-sev">${escapeHtml(ja)}</span>${hc}${cnt}
+            </div>
+            <div class="st-narr">${escapeHtml(e.narrative)}</div>
+            <div class="st-meta">${prog}${ids}</div>
+          </div>
+        </li>`;
+    }).join("");
+
+    return `<div class="story">
+        ${summary}
+        <div class="story-head">🧭 攻撃の流れ（時系列）<span class="muted small"> — 上から下へ、起きた順に読めます</span></div>
+        <ol class="story-timeline">${steps}</ol>
+      </div>`;
+  }
+
   // 行をクリック → そのPCの「危険の内訳」(検知ルール上位) を遅延ロードして展開。
   // 攻撃のキルチェーン図。侵害が疑われる (crit/high がある) 場合のみ、
   // 検知した手口を ATT&CK の段階順 (初期侵入→…→影響) に左から右へ並べ、
@@ -2678,15 +2755,22 @@ console.log("[app] app.js v2026-05-21-c executing");
       const chanLine = chans.length
         ? `<div class="rd-chans">記録源: ${chans.map(c => `${escapeHtml(c.channel)} (${c.n})`).join(" ・ ")}</div>`
         : "";
+      const storyHtml = renderAttackStory(story);
       panel.innerHTML = `<div class="rank-detail-inner">
-          ${renderKillChain(story, "stage")}
-          <div class="rd-head">このパソコンで見つかった“あやしい動き” 上位 ${rules.length} 件 <span class="muted small">— 各行に「なにをする手口か」を表示</span></div>
-          ${ruleRows}
-          ${chanLine}
-          <div class="rd-note">数字は当てはまった回数です（回数はスコアに影響しません）。スコアは <b>緊急/高 の“異なる手口の数”</b>で決まり、<b>☣ 実攻撃で確認された手口</b>は特に重く数えます。</div>
+          ${storyHtml || `<div class="muted small" style="margin-bottom:8px">緊急・高レベルの明確な攻撃連鎖は見つかりませんでした（下の一覧で個別の検知を確認できます）。</div>`}
+          ${storyHtml ? `<details class="rd-more"><summary>🧬 ATT&amp;CK 段階マップで見る（上級者向け）</summary>
+            <div style="margin-top:8px">${renderKillChain(story, "stage")}</div></details>` : ""}
+          <details class="rd-more"${storyHtml ? "" : " open"}>
+            <summary>📋 検知した手口の一覧（${rules.length} 件）</summary>
+            <div style="margin-top:8px">
+              ${ruleRows}
+              ${chanLine}
+            </div>
+          </details>
+          <div class="rd-note">スコアは <b>緊急/高 の“異なる手口の数”</b>で決まり、<b>☣ 実攻撃で確認された手口</b>は特に重く数えます。</div>
         </div>`;
       panel.dataset.loaded = "1";
-      // キルチェーンの「段階順 ⇄ 時系列順」トグルを配線。
+      // 段階マップを開いたときにトグルを配線（存在すれば）。
       wireKillChainToggle(panel, story);
     } catch (e) {
       panel.innerHTML = `<div class="muted small" style="padding:10px 14px">取得に失敗: ${escapeHtml(String(e))}</div>`;

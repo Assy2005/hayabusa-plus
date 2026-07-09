@@ -841,6 +841,75 @@ ul.ptree ul.ptree { margin-left: 18px; padding-left: 14px; border-left: 2px soli
   font-size: 18px; font-weight: 700; padding: 0 1px;
 }
 
+/* ===== 攻撃ストーリー（時系列タイムライン）= 主役ビュー ===== */
+.story { margin: 4px 0 12px; }
+.story-summary {
+  padding: 10px 14px; border-radius: 10px; margin-bottom: 12px;
+  border: 1px solid var(--line); border-left: 5px solid #B30000;
+  background: #FFF3F3;
+}
+.story-summary.tone-crit { border-left-color: #B30000; background: #FCEBEB; }
+.story-summary.tone-high { border-left-color: #E8720C; background: #FDF2E7; }
+.ss-title { font-weight: 800; font-size: 15px; }
+.ss-flow { font-weight: 700; margin: 4px 0; font-size: 14px; }
+.ss-arrow { color: #B30000; margin: 0 2px; }
+.ss-sub { margin-top: 2px; }
+
+.story-head { font-weight: 700; margin: 6px 2px 8px; }
+.story-timeline { list-style: none; margin: 0; padding: 0; }
+.story-step { display: flex; gap: 10px; align-items: stretch; }
+/* 左レール: 縦線＋色付きの丸 */
+.st-rail {
+  position: relative; flex: 0 0 16px; display: flex; justify-content: center;
+}
+.st-rail::before {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 2px;
+  background: var(--line);
+}
+.story-step:first-child .st-rail::before { top: 10px; }
+.story-step:last-child .st-rail::before { bottom: calc(100% - 12px); }
+.st-dot {
+  position: relative; z-index: 1; width: 12px; height: 12px; margin-top: 4px;
+  border-radius: 50%; background: #bbb; border: 2px solid var(--panel);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.story-step.lv-critical .st-dot { background: #B30000; }
+.story-step.lv-high .st-dot { background: #E8720C; }
+.story-step.lv-medium .st-dot { background: #C9A227; }
+.story-step.lv-low .st-dot { background: #2f9e63; }
+
+.st-body {
+  flex: 1 1 auto; min-width: 0; margin-bottom: 10px; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.st-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 3px; }
+.st-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.st-tac {
+  font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 10px;
+  background: #eef; color: #334;
+}
+.st-tac.lv-critical { background: #FBE3E3; color: #7a0010; }
+.st-tac.lv-high { background: #FBEBDD; color: #8a4b00; }
+.st-sev { font-size: 11px; color: var(--muted); }
+.st-hc { color: #B30000; font-weight: 800; }
+.st-count { font-size: 11px; color: var(--muted); }
+.st-narr { font-weight: 600; line-height: 1.45; }
+.st-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.st-prog { font-size: 12px; color: #1a7f4b; font-weight: 600; word-break: break-all; }
+.st-ids { font-size: 10px; color: var(--muted); }
+
+.rd-more > summary {
+  cursor: pointer; font-weight: 600; padding: 6px 0; user-select: none;
+}
+.rd-more[open] > summary { margin-bottom: 2px; }
+
+@media (prefers-color-scheme: dark) {
+  .story-summary { background: #2a1e1e; }
+  .story-summary.tone-crit { background: #2a1414; }
+  .story-summary.tone-high { background: #2a1e12; }
+  .st-tac { background: #2a2f3a; color: #cdd; }
+}
+
 /* ===== ランキング展開: ログごと説明 ===== */
 .rd-rule-head { display: flex; align-items: center; gap: 8px; }
 .rd-desc {
