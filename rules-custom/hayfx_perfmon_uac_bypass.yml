@@ -1,0 +1,24 @@
+title: Perfmon UAC Bypass Via Temp system32 Path
+id: hayfx-perfmon-uac-bypass
+status: experimental
+description: Detects execution of a copied mmc.exe from a user-writable Temp\system32 path via perfmon.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1548/002/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|contains: '\AppData\Local\Temp\system32\mmc.exe'
+    ParentImage|endswith: '\perfmon.exe'
+  condition: selection
+falsepositives:
+  - Unlikely outside UAC-bypass tooling.
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.t1548.002

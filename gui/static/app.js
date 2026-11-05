@@ -19,18 +19,60 @@ console.log("[app] app.js v2026-05-21-c executing");
   };
   const localizeStatus = (s) => STATUS_JA[s] || s;
 
+  // Relationship-graph state is declared before switchTab so a direct
+  // #graph deep-link can call initRelationshipGraph during boot.
+  let _graphInited = false;
+  let _graphData = null;
+  let _graphSvg = null;
+  let _graphSize = { w: 1200, h: 700 };
+  let _graphZoom = 1;
+  let _graphLayout = null;
+  let _graphMatches = [];
+  let _graphMatchIndex = 0;
+  let _graphDragMoved = false;
+  let _graphFocusId = null;
+
   // -------- tabs --------
+  // サブ画面 → サイドバーの親グループ。グループ見出しは親で点灯させ、
+  // サブ項目だけを完全一致で点灯させる。
+  const TAB_PARENT = {
+    dashboard: "results", hosts: "results", proctree: "results",
+    cases: "results",
+    hunt: "investigate", logs: "investigate", elastic: "investigate",
+    graph: "investigate",
+    rules: "settings", about: "settings",
+  };
+
   // Switch to a tab by its data-tab name. Centralised so home-screen
   // shortcut cards and in-app pivots can reuse it.
   function switchTab(name) {
-    // 公開(危険度ランキング)モードでは、ローカル専用タブ (結果/全体ビュー/さがす/
-    // パソコン別) への遷移をすべてランキングへ振り替える。ナビは非表示でも、
-    // ホームのカードや検知詳細リンク経由で抜け道になるのを防ぐ。
+    // 公開(危険度ランキング)モードでは、ローカル専用グループへの遷移を
+    // すべてランキングへ振り替える。ナビは非表示でも、ホームのカードや
+    // 検知詳細リンク経由で抜け道になるのを防ぐ。
     if (document.body.classList.contains("public-mode")) {
-      const t = document.querySelector('.tab[data-tab="' + name + '"]');
-      if (t && t.classList.contains("local-only")) name = "ranking";
+      const el = document.querySelector('[data-tab="' + name + '"]');
+      if (el && el.closest(".local-only")) name = "ranking";
     }
-    $$(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
+    if (!document.getElementById("tab-" + name)) return;
+    if (name !== "graph") {
+      document.querySelector(".graph-card")?.classList.remove("graph-fullscreen");
+      document.body.classList.remove("graph-fullscreen-open");
+      const fb = document.querySelector("#graph-fullscreen");
+      if (fb) fb.textContent = "全画面";
+    }
+    const parent = TAB_PARENT[name] || name;
+
+    $$(".nav-group").forEach(g => g.classList.toggle("is-active", g.dataset.group === parent));
+    $$(".tab").forEach(x => {
+      const g = x.closest(".nav-group");
+      if (g) {
+        x.classList.toggle("active", g.dataset.group === parent && x.classList.contains("group-lead"));
+      } else {
+        x.classList.toggle("active", x.dataset.tab === name);
+      }
+    });
+    $$(".snav").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
+
     const id = "tab-" + name;
     $$(".tab-panel").forEach(p => p.classList.toggle("active", p.id === id));
     // タブを URL ハッシュに反映 → 共有・ブックマーク・直リンクが効く
@@ -38,14 +80,37 @@ console.log("[app] app.js v2026-05-21-c executing");
       try { history.replaceState(null, "", "#" + name); } catch { location.hash = name; }
     }
     if (name === "results") refreshJobs();
+    if (name === "cases") loadCases();
     if (name === "rules") { loadRules(); loadFeedback(); loadSuppressions(); loadLookups(); }
     if (name === "dashboard") loadDashboard();
     if (name === "hunt") initHunt();
     if (name === "hosts") loadHosts();
     if (name === "ranking") loadRanking();
     if (name === "proctree") initProcessTree();
+    if (name === "graph") initRelationshipGraph();
+    // Extension point for the modules in extra.js (log search / Elastic).
+    // A DOM event keeps app.js from having to know about them.
+    window.dispatchEvent(new CustomEvent("hayfx:tab", { detail: { name } }));
   }
-  $$(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+  $$(".tab, .snav").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+
+  // -------- detection drawer --------
+  // 検知詳細は右側のドロワー。テーブルを隠さずに読めるよう、背景と
+  // 閉じるボタン・Esc を用意する。
+  const _dw = $("#detail-wrap");
+  const _db = $("#detail-backdrop");
+  if (_dw && _db) {
+    const syncDrawer = () => { _db.hidden = _dw.hidden; };
+    new MutationObserver(syncDrawer).observe(_dw, { attributes: true, attributeFilter: ["hidden"] });
+    syncDrawer();
+    const closeDrawer = () => { _dw.hidden = true; };
+    const closeBtn = $("#detail-close");
+    if (closeBtn) closeBtn.addEventListener("click", closeDrawer);
+    _db.addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !_dw.hidden) closeDrawer();
+    });
+  }
 
   // 起動時に URL ハッシュ (#dashboard 等) があればそのタブを開く
   const _hashTab = (location.hash || "").replace(/^#/, "");
@@ -53,24 +118,47 @@ console.log("[app] app.js v2026-05-21-c executing");
     switchTab(_hashTab);
   }
 
+  // 実行環境の表示。企業内運用では「どの解析ホストの、どのデータ領域を
+  // 見ているか」が重要なので、設定 API の事実をそのまま出す。
+  const RUNTIME_JA = {
+    wsl: "WSL (解析用)", linux: "Linux (解析用)", windows: "Windows (互換)",
+    macos: "macOS", darwin: "macOS",
+  };
+  function renderPosture(cfg) {
+    const dep = (cfg && cfg.deployment) || {};
+    const set = (id, text) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    };
+    const runtime = RUNTIME_JA[dep.runtime] || dep.runtime || "—";
+    set("post-runtime", dep.hostname ? `${runtime} · ${dep.hostname}` : runtime);
+    set("post-bind", dep.bind_scope === "lan"
+      ? "LAN 公開（認証なし・非推奨）"
+      : `localhost のみ (${dep.bind_host || "127.0.0.1"})`);
+    set("post-auth", dep.auth === "none"
+      ? (dep.bind_scope === "lan" ? "なし（LAN 公開・危険）" : "なし（ローカル単独）")
+      : (dep.auth || "—"));
+    const ps = document.getElementById("home-posture");
+    if (ps) ps.dataset.scope = dep.bind_scope || "loopback";
+    // 設定画面とフッタでも同じ事実を参照できるように保持する。
+    window.__hayabusaDeployment = dep;
+  }
+
   // 公開(危険度ランキング)モードの判定。サーバが 0.0.0.0 で待受しているとき
   // network_mode=true。ローカル専用機能を隠し、ランキングを入口にする。
   fetch("/api/config").then(r => r.json()).then(cfg => {
     // 運営者(localhost)だけに「安全としてマーク」等の管理操作を見せる。
     document.body.classList.toggle("is-admin", !!(cfg && cfg.is_admin));
+    renderPosture(cfg);
     if (cfg && cfg.network_mode) {
       document.body.classList.add("public-mode");
       // 入口はランキング。直リンク (#results 等) でローカル専用タブを開いた場合も振り替える。
       const cur = document.querySelector(".tab.active");
-      if (!_hashTab || (cur && cur.classList.contains("local-only"))) switchTab("ranking");
+      if (!_hashTab || (cur && cur.closest(".local-only"))) switchTab("ranking");
       loadRankingStats();   // スキャン画面の大会ダッシュボードを初期表示
     }
   }).catch(() => {});
 
-  // ホーム画面の 3 ステップカード → 該当タブへ
-  $$(".home-step").forEach(step => {
-    step.onclick = () => { const g = step.dataset.goto; if (g) switchTab(g); };
-  });
   // 空状態などからの「○○へ」ボタン (data-goto-tab) を委譲で拾う
   document.addEventListener("click", (e) => {
     const el = e.target.closest("[data-goto-tab]");
@@ -84,7 +172,7 @@ console.log("[app] app.js v2026-05-21-c executing");
       const d = await r.json();
       $("#ver").textContent = (d.version || "").replace(/^Hayabusa\s*/, "");
       $("#health").classList.add("ok");
-      $("#health").title = "Hayabusa 正常\n" + d.hayabusa;
+      $("#health").title = "Hayabusa 正常" + (d.hayabusa ? "\n" + d.hayabusa : "");
     } catch (e) {
       $("#health").classList.add("bad");
       $("#health").title = "Hayabusa との通信に失敗しました";
@@ -137,276 +225,6 @@ console.log("[app] app.js v2026-05-21-c executing");
     } catch (e) { /* ignore */ }
   }
 
-  // -------- "このパソコン" カード --------
-  // We hold the latest /api/system/info response so the modal can reuse it
-  // without a second fetch. Refresh is cheap so we re-pull on each open.
-  let systemInfo = null;
-  // Channels currently selected for live scan. Empty = "all readable".
-  let selectedChannels = [];
-
-  async function loadSystemInfo() {
-    try {
-      const r = await fetch("/api/system/info", { cache: "no-store" });
-      systemInfo = await r.json();
-      console.log("[app] system info: " + (systemInfo.channels?.length || 0)
-        + " channels, admin=" + systemInfo.admin);
-    } catch (e) {
-      systemInfo = null;
-      console.error("[app] loadSystemInfo failed:", e);
-    }
-    renderThisPc();
-    // Pre-render the modal contents so opening the modal is purely a
-    // visibility toggle — no async, no race conditions, no chance for the
-    // user to see an empty list.
-    renderChannelsList();
-  }
-
-  // Detached from openChannelsModal so we can call it eagerly at boot.
-  // The modal stays hidden; only its INNER content is populated.
-  function renderChannelsList() {
-    const host = document.querySelector("#channels-list");
-    if (!host) {
-      console.error("[channels] #channels-list element missing");
-      return;
-    }
-    host.innerHTML = "";
-    if (!systemInfo) {
-      host.innerHTML = `<div class="muted small" style="padding:14px">
-        <strong>システム情報の取得に失敗しました。</strong><br/>
-        サーバ <code>/api/system/info</code> が応答していません。
-      </div>`;
-      return;
-    }
-    if (systemInfo.platform !== "win32") {
-      host.innerHTML = `<div class="muted small" style="padding:14px">
-        Windows 上でのみ動作します (現在: ${escapeHtml(String(systemInfo.platform))})。
-      </div>`;
-      return;
-    }
-    if (!Array.isArray(systemInfo.channels) || systemInfo.channels.length === 0) {
-      host.innerHTML = `<div class="muted small" style="padding:14px">
-        EVTX チャネルが見つかりません: <code>${escapeHtml(String(systemInfo.evtx_root || ""))}</code>
-      </div>`;
-      return;
-    }
-    const sorted = [...systemInfo.channels].sort((a, b) => {
-      const pa = a.priority ? 1 : 0, pb = b.priority ? 1 : 0;
-      if (pa !== pb) return pb - pa;
-      const ra = a.readable ? 1 : 0, rb = b.readable ? 1 : 0;
-      if (ra !== rb) return rb - ra;
-      return (b.size || 0) - (a.size || 0);
-    });
-    try {
-      const frag = document.createDocumentFragment();
-      sorted.forEach(c => {
-        const row = document.createElement("div");
-        row.className = "row" + (c.priority ? " priority" : "")
-          + (c.readable ? "" : " unreadable");
-        const checked = c.priority && c.readable;
-        row.innerHTML = `
-          <input type="checkbox" data-name="${escapeHtml(c.name)}" ${checked ? "checked" : ""}
-                 ${c.readable ? "" : "disabled"} />
-          <div class="name" title="${escapeHtml(c.name)}">${escapeHtml(c.channel || c.name)}</div>
-          <div class="size">${c.size != null ? fmtSize(c.size) : "—"}</div>
-          <div class="badge">${c.priority ? "PRIORITY" : (c.readable ? "" : "DENIED")}</div>`;
-        frag.appendChild(row);
-      });
-      host.appendChild(frag);
-      console.log("[channels] pre-rendered " + sorted.length + " rows");
-    } catch (e) {
-      console.error("[channels] render failed:", e);
-      host.innerHTML = `<div class="muted small" style="padding:14px;color:#ef5350">
-        描画エラー: <code>${escapeHtml(String(e))}</code></div>`;
-    }
-  }
-
-  function renderThisPc() {
-    const summary = $("#this-pc-summary");
-    const status = $("#this-pc-status");
-    const btnScan = $("#pc-scan-btn");
-    const btnImport = $("#pc-import-btn");
-    const btnCh = $("#pc-channels-btn");
-    if (!systemInfo) {
-      summary.textContent = "情報取得に失敗";
-      status.textContent = "/api/system/info が応答していません。";
-      [btnScan, btnImport, btnCh].forEach(b => b.disabled = true);
-      return;
-    }
-    if (systemInfo.platform !== "win32") {
-      summary.textContent = systemInfo.platform;
-      status.textContent = "この機能は Windows でのみ動作します。";
-      [btnScan, btnImport, btnCh].forEach(b => b.disabled = true);
-      return;
-    }
-    const total = systemInfo.total_size || 0;
-    const readable = systemInfo.channels.filter(c => c.readable).length;
-    const unread = systemInfo.unreadable_count;
-    summary.textContent = `${systemInfo.channels.length} チャネル / 読取可 ${readable}`;
-    if (systemInfo.admin) {
-      status.className = "this-pc-status ok";
-      status.innerHTML = `✓ 管理者権限あり &nbsp; ・ &nbsp; 読み取り可能ログ: ${fmtSize(total)}`
-        + (unread ? `<span class="muted small"> (${unread} 件 アクセス不可)</span>` : "");
-    } else {
-      status.className = "this-pc-status warn";
-      status.innerHTML = `⚠ サーバプロセスが管理者権限で動いていません。 <span class="muted small">`
-        + `PowerShell を「管理者として実行」で開き直して <code>.\\start.ps1</code> を起動してください。`
-        + `現状でも Application / PowerShell 等の一部チャネルは読めるので、`
-        + `そのままスキャンしても部分的な結果は得られます。</span>`;
-    }
-    // We keep all three buttons clickable regardless of admin status —
-    // Hayabusa itself returns a clean error when it can't read a file,
-    // and disabling buttons silently leaves users wondering why nothing
-    // happens. The buttons surface real failures faster than guessing
-    // ahead of time.
-    [btnScan, btnImport, btnCh].forEach(b => b.disabled = false);
-  }
-
-  // --- buttons ---
-  $("#pc-scan-btn").onclick = async () => {
-    // One-click live scan: set the form fields, update the visible
-    // selection summary, then immediately kick off the same scan flow
-    // that the main run-button uses. Skipping the extra click matches
-    // the user's mental model ("I pressed scan, scan something").
-    $("#target-type").value = "live";
-    $("#allow-live").checked = true;
-    $("#target-path").value = "";
-    const label = $("#selection-label");
-    label.textContent = "ライブ解析 (このパソコン)";
-    label.classList.remove("selection-empty");
-    refreshWorkspace();
-    updateScanButton();
-    // Programmatically invoke the main scan button. Going through
-    // .click() keeps a single source of truth for the scan path
-    // (validation, summary update, live-feed binding all live there).
-    if (!$("#scan-btn").disabled) {
-      $("#scan-btn").click();
-    } else {
-      alert("スキャン開始ボタンが無効です。コンソール (F12) のエラーを確認してください。");
-    }
-  };
-
-  $("#pc-import-btn").onclick = async () => {
-    // Default import = priority channels with readable=true.
-    const names = (systemInfo?.channels || [])
-      .filter(c => c.priority && c.readable)
-      .map(c => c.name);
-    if (!names.length) {
-      alert("読み取り可能な優先チャネルがありません。管理者権限で再起動してください。");
-      return;
-    }
-    if (!confirm(`${names.length} 個のチャネル(優先のみ)を workspace/uploads/system-snapshot/ にコピーします。よろしいですか?`)) return;
-    const btn = $("#pc-import-btn");
-    btn.disabled = true;
-    btn.textContent = "コピー中…";
-    try {
-      const r = await fetch("/api/system/import", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({channels: names}),
-      });
-      const d = await r.json();
-      if (d.error) { alert("エラー: " + d.error); return; }
-      const errMsg = d.errors.length ? `\n失敗: ${d.errors.length} 件` : "";
-      alert(`${d.saved.length} 個のファイルを取り込みました → ${d.snapshot_dir}/${errMsg}`);
-      refreshWorkspace();
-    } catch (e) {
-      alert("通信エラー: " + e);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "EVTX を取り込む";
-    }
-  };
-
-  // --- channel picker modal ---
-  // Open is JS-side because it has to populate / refresh content.
-  $("#pc-channels-btn").onclick = () => openChannelsModal();
-  // Close handlers are EXCLUSIVELY in HTML inline onclick (see index.html).
-  // We deliberately do NOT register a JS-side handler for #channels-close
-  // because `.onclick = ...` would overwrite the inline attribute, and any
-  // hiccup in the JS arrow function would silently dead-end the close.
-  // Escape key handling is the one JS-side close we keep — there is no
-  // sensible inline equivalent.
-  document.addEventListener("keydown", (e) => {
-    const modal = $("#channels-modal");
-    if (e.key === "Escape" && modal && !modal.classList.contains("is-hidden")) {
-      modal.classList.add("is-hidden");
-    }
-  });
-  $("#ch-select-priority").onclick = () => setChannelSelection(c => c.priority && c.readable);
-  $("#ch-select-all").onclick = () => setChannelSelection(c => c.readable);
-  $("#ch-select-none").onclick = () => setChannelSelection(() => false);
-
-  // We attach the change listener exactly once at boot; the rows that
-  // come and go inside #channels-list are caught via event delegation.
-  $("#channels-list").addEventListener("change", updateChannelsSummary);
-
-  function openChannelsModal() {
-    // Contents are pre-rendered at boot inside loadSystemInfo →
-    // renderChannelsList. Opening is now a pure DOM toggle — no async, no
-    // race conditions, no chance of an empty list.
-    console.log("[channels] open modal");
-    // If the list is still empty (loadSystemInfo never completed), kick
-    // off a synchronous re-render based on the current cached state. The
-    // user will see whatever the latest fetch produced.
-    const host = document.querySelector("#channels-list");
-    if (host && host.children.length === 0) {
-      renderChannelsList();
-    }
-    $("#channels-modal").classList.remove("is-hidden");
-    updateChannelsSummary();
-  }
-  function setChannelSelection(pred) {
-    document.querySelectorAll("#channels-list input[type=checkbox]").forEach(cb => {
-      cb.checked = !cb.disabled && pred({
-        name: cb.dataset.name,
-        priority: cb.closest(".row").classList.contains("priority"),
-        readable: !cb.disabled,
-      });
-    });
-    updateChannelsSummary();
-  }
-  function getCheckedChannels() {
-    return Array.from(document.querySelectorAll("#channels-list input[type=checkbox]:checked"))
-      .map(cb => cb.dataset.name);
-  }
-  function updateChannelsSummary() {
-    const names = getCheckedChannels();
-    let bytes = 0;
-    const byName = new Map((systemInfo?.channels || []).map(c => [c.name, c]));
-    names.forEach(n => bytes += byName.get(n)?.size || 0);
-    $("#channels-summary").textContent =
-      `${names.length} 個選択中 (計 ${fmtSize(bytes)})`;
-  }
-  $("#channels-confirm").onclick = async () => {
-    const names = getCheckedChannels();
-    if (!names.length) { alert("少なくとも 1 つのチャネルを選んでください"); return; }
-    $("#channels-modal").classList.add("is-hidden");
-    // Import the selected channels into workspace and then point the
-    // target there. This lets us use directory-mode scan (no admin
-    // needed after the import) and lets the user re-scan the same
-    // snapshot multiple times.
-    const btn = $("#channels-confirm");
-    btn.disabled = true; btn.textContent = "取込中…";
-    try {
-      const r = await fetch("/api/system/import", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({channels: names}),
-      });
-      const d = await r.json();
-      if (d.error) { alert("エラー: " + d.error); return; }
-      // Point the scan target at the snapshot dir.
-      $("#target-type").value = "directory";
-      $("#allow-live").checked = false;
-      $("#target-path").value = d.snapshot_dir;
-      const label = $("#selection-label");
-      label.textContent = `${d.snapshot_dir}/  (${d.saved.length} ファイル、計 ${fmtSize(d.saved.reduce((s,x)=>s+x.size,0))})`;
-      label.classList.remove("selection-empty");
-      updateScanButton();
-      refreshWorkspace();
-    } finally {
-      btn.disabled = false; btn.textContent = "この選択でスキャン";
-    }
-  };
-
   // -------- target selection --------
   function selectTarget(item) {
     $("#target-path").value = item.rel;
@@ -451,8 +269,10 @@ console.log("[app] app.js v2026-05-21-c executing");
       return;
     }
     let lastSaved = null;
+    const caseName = ($("#case-name")?.value || "").trim();
     for (const f of files) {
       const fd = new FormData(); fd.append("file", f);
+      if (caseName) fd.append("case_name", caseName);
       $("#upload-status").textContent =
         /\.zip$/i.test(f.name)
           ? `アップロード中…（ZIP を展開します） ${f.name} (${fmtSize(f.size)})`
@@ -475,14 +295,16 @@ console.log("[app] app.js v2026-05-21-c executing");
         return;
       }
     }
+    const hashNote = lastSaved && lastSaved.sha256
+      ? ` ・ SHA-256 ${lastSaved.sha256.slice(0, 16)}…` : "";
     if (lastSaved && lastSaved.kind === "dir") {
       $("#upload-status").textContent =
-        `ZIP を展開しました → ${lastSaved.count} 個の .evtx（まとめてスキャンします）`;
+        `ZIP を展開しました → ${lastSaved.count} 個の .evtx（まとめてスキャンします）${hashNote}`;
     } else {
       $("#upload-status").textContent =
         files.length === 1
-          ? `保存しました → ${lastSaved.rel}`
-          : `${files.length} 個のファイルを保存しました`;
+          ? `保存しました → ${lastSaved.rel}${hashNote}`
+          : `${files.length} 個のファイルを保存しました${hashNote}`;
     }
     await refreshWorkspace();
     if (lastSaved) {
@@ -541,13 +363,21 @@ console.log("[app] app.js v2026-05-21-c executing");
   function updateScanButton() {
     const btn = $("#scan-btn");
     const summary = $("#scan-summary");
+    const main = btn?.querySelector(".scan-go-main");
+    if (scanRunning) {
+      if (btn) btn.disabled = true;
+      if (main) main.textContent = "スキャン中…";
+      else if (btn) btn.textContent = "スキャン中…";
+      if (summary) summary.textContent = "完了までお待ちください";
+      return;
+    }
+    if (main) main.textContent = "スキャン開始";
+    if (!btn) return;
     const path = $("#target-path").value.trim();
-    const type = $("#target-type").value;
-    const live = $("#allow-live").checked && type === "live";
-    const hasTarget = live || path.length > 0;
+    const hasTarget = path.length > 0;
     btn.disabled = !hasTarget;
     if (!hasTarget) {
-      summary.textContent = "先にステップ 1 で対象を選んでください";
+      if (summary) summary.textContent = "先にステップ 1 で対象を選んでください";
       return;
     }
     const level = $("#min-level").value;
@@ -556,18 +386,23 @@ console.log("[app] app.js v2026-05-21-c executing");
     if ($("#enable-all").checked)  flags.push("全ルール");
     if ($("#proven-only").checked) flags.push("実績ルールのみ");
     if ($("#dedupe").checked)      flags.push("重複排除");
-    const targetLabel = live ? "ライブ解析" : path;
-    summary.textContent =
-      `${targetLabel} ・ 最小レベル: ${level}` +
-      (flags.length ? ` ・ ${flags.join(" / ")}` : "");
+    const targetLabel = path;
+    const caseName = ($("#case-name")?.value || "").trim();
+    if (summary) {
+      summary.textContent =
+        `${targetLabel} ・ 最小レベル: ${level}` +
+        (caseName ? ` ・ 案件: ${caseName}` : " ・ 案件未指定") +
+        (flags.length ? ` ・ ${flags.join(" / ")}` : "");
+    }
   }
 
   // Hooks that should also recompute the summary.
   $("#target-type").addEventListener("change", updateScanButton);
-  $("#allow-live").addEventListener("change", updateScanButton);
+  $("#case-name")?.addEventListener("input", updateScanButton);
 
   // -------- scan submission --------
   let liveES = null;
+  let scanRunning = false;
 
   // ニックネームはブラウザに記憶。値が "" でも「キーが存在する=入力済み」と扱い、
   // 2回目以降はモーダルを出さずにその名前でランキング更新する。
@@ -590,7 +425,9 @@ console.log("[app] app.js v2026-05-21-c executing");
     return {
       target: { type: targetType, path: $("#target-path").value.trim() },
       nickname: nick,
-      allow_live: $("#allow-live").checked,
+      // Case is optional. A name is enough for first use; the server reuses
+      // an existing open case with the same name.
+      case_name: ($("#case-name")?.value || "").trim(),
       min_level: $("#min-level").value,
       eid_filter: $("#eid-filter").checked,
       enable_all_rules: $("#enable-all").checked,
@@ -604,13 +441,30 @@ console.log("[app] app.js v2026-05-21-c executing");
   }
 
   async function startScan() {
-    const r = await fetch("/api/scan", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildScanParams())
-    });
-    const d = await r.json();
-    if (d.error) { alert("スキャンを開始できませんでした: " + d.error); return; }
-    bindLive(d.job_id);
+    if (scanRunning) return;
+    scanRunning = true;
+    updateScanButton();
+    let d;
+    try {
+      const params = buildScanParams();
+      const r = await fetch("/api/scan", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params)
+      });
+      d = await r.json();
+    } catch (e) {
+      scanRunning = false;
+      updateScanButton();
+      alert("スキャンを開始できませんでした: " + e);
+      return;
+    }
+    if (d.error) {
+      scanRunning = false;
+      updateScanButton();
+      alert("スキャンを開始できませんでした: " + d.error);
+      return;
+    }
+    bindLive(d.job_id, d.job_token);
   }
 
   function openNicknameModal(startAfter) {
@@ -652,8 +506,10 @@ console.log("[app] app.js v2026-05-21-c executing");
   // Detection rows in the feed key off this when fetching detail.
   let liveJobId = null;
 
-  function bindLive(jobId) {
+  function bindLive(jobId, jobToken) {
     liveJobId = jobId;
+    scanRunning = true;
+    updateScanButton();
     // スキャン中は公開モードの大会ダッシュを隠し、進捗を前面に出す。
     document.body.classList.add("scanning");
     $("#live-card").hidden = false;
@@ -677,6 +533,12 @@ console.log("[app] app.js v2026-05-21-c executing");
         const tail = totalFilesSeen
           ? `（${totalFilesSeen.toLocaleString()} 件のログ）` : "";
         $("#progress-note").textContent = `解析完了 ✓ 100%${tail}`;
+        return;
+      }
+      if (lastPct >= 99) {
+        const tail = totalFilesSeen
+          ? `（${totalFilesSeen.toLocaleString()} 件のログ）` : "";
+        $("#progress-note").textContent = `最終処理中… 99%${tail}（完了待ち）`;
         return;
       }
       const parts = [];
@@ -708,16 +570,26 @@ console.log("[app] app.js v2026-05-21-c executing");
     }, 1000);
 
     // スキャン終了時に進捗 UI を片付ける共通処理
-    const finishUI = (statusText) => {
+    let finishedUI = false;
+    const finishUI = (statusText, complete = false) => {
+      if (finishedUI) return;
+      finishedUI = true;
       clearInterval(tick);
+      if (liveES) { liveES.close(); liveES = null; }
       document.body.classList.remove("scanning");   // 大会ダッシュを戻す
       cancelBtn.hidden = true;
+      if (complete) setProgress(100, 0);
       if (statusText) $("#progress-note").textContent = statusText;
-      // 100% を一瞬見せてから片付ける (完了が伝わるように)。
-      setTimeout(() => { $("#scan-progress").hidden = true; }, 450);
+      scanRunning = false;
+      updateScanButton();
+      refreshJobs();
+      // 完了表示を少し見せてから片付ける。
+      setTimeout(() => { $("#scan-progress").hidden = true; }, 1200);
     };
 
-    liveES = new EventSource(`/api/jobs/${jobId}/stream`);
+    const streamUrl = `/api/jobs/${jobId}/stream` +
+      (jobToken ? `?token=${encodeURIComponent(jobToken)}` : "");
+    liveES = new EventSource(streamUrl);
     liveES.onmessage = (ev) => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
@@ -728,8 +600,12 @@ console.log("[app] app.js v2026-05-21-c executing");
           if (msg.job.total_files) totalFilesSeen = msg.job.total_files;
           renderNote();
         }
-        if (["done", "failed", "cancelled"].includes(msg.job.status)) {
-          finishUI();
+        if (msg.job.status === "done") {
+          finishUI("解析完了 ✓ 100%", true);
+        } else if (msg.job.status === "failed") {
+          finishUI("解析に失敗しました");
+        } else if (msg.job.status === "cancelled") {
+          finishUI("中止しました");
         }
       } else if (msg.type === "meta") {
         // 規模 (総ログ件数) が分かったら note に反映
@@ -744,9 +620,7 @@ console.log("[app] app.js v2026-05-21-c executing");
         $("#m-count").textContent = msg.n;
         appendDetection(msg.event, msg.n);
       } else if (msg.type === "complete") {
-        liveES.close(); liveES = null;
-        finishUI();
-        refreshJobs();
+        finishUI("解析完了 ✓ 100%", true);
         // 公開(ランキング)モードでは、スキャンが終わるたびに順位を更新する。
         if (document.body.classList.contains("public-mode")) { loadRanking(); loadRankingStats(); }
       } else if (msg.type === "error") {
@@ -756,7 +630,14 @@ console.log("[app] app.js v2026-05-21-c executing");
         $("#live-feed").appendChild(row);
       }
     };
-    liveES.onerror = () => { finishUI(); };
+    liveES.onerror = () => {
+      // EventSource reconnects automatically. Keep the scan button disabled;
+      // otherwise the user can start a second scan while the first still runs.
+      if (!finishedUI) {
+        $("#progress-note").textContent =
+          "サーバとの接続が切れました。自動再接続しています…";
+      }
+    };
   }
 
   // スキャンを中止する。サーバ側で subprocess を terminate/kill する。
@@ -908,7 +789,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (prog) {
       const svc = actor.service && actor.service !== actor.program
         ? ` <span class="muted small">(サービス: ${escapeHtml(actor.service)})</span>` : "";
-      rows.push(`<div class="actor-row"><span class="actor-k">🖥 実行プログラム</span>
+      rows.push(`<div class="actor-row"><span class="actor-k">実行プログラム</span>
         <code class="actor-v">${escapeHtml(prog)}</code>${svc}</div>`);
     }
     if (actor.command && actor.command !== prog) {
@@ -925,7 +806,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     if (actor.pid) meta.push(`PID ${escapeHtml(actor.pid)}`);
     if (meta.length) rows.push(`<div class="actor-row muted small">${meta.join(" ・ ")}</div>`);
     return `<div class="actor-block">
-      <div class="actor-head">🎯 何が実行したか</div>
+      <div class="actor-head">何が実行したか</div>
       ${rows.join("")}
     </div>`;
   }
@@ -951,7 +832,7 @@ console.log("[app] app.js v2026-05-21-c executing");
         </div>`;
     }).join("");
     return `<div class="explain-around">
-        <h4>🕑 このアラートの前後のログ <span class="muted small">同じPCで ±5分に出た検知（クリックで移動）</span></h4>
+        <h4>このアラートの前後のログ <span class="muted small">同じPCで ±5分に出た検知（クリックで移動）</span></h4>
         <div class="around-list">${rowsHtml}</div>
       </div>`;
   }
@@ -1001,7 +882,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     const aroundHtml = renderAround(detail?.related, ev);
     // 「このログが実際に何をしたか」の平易な日本語1文（サーバ生成）。
     const narrHtml = detail?.narrative
-      ? `<div class="explain-narr"><span class="en-k">📖 このログがしたこと</span>
+      ? `<div class="explain-narr"><span class="en-k">このログがしたこと</span>
            <span class="en-v">${escapeHtml(detail.narrative)}</span></div>`
       : "";
 
@@ -1026,7 +907,7 @@ console.log("[app] app.js v2026-05-21-c executing");
           </div>
         </div>
         <div class="explain-log">
-          <h4>📄 検知したログの中身 <span class="muted small">このルールに引っかかった実際のログ</span></h4>
+          <h4>検知したログの中身 <span class="muted small">このルールに引っかかった実際のログ</span></h4>
           <div class="explain-log-meta muted small">
             チャネル: <code>${escapeHtml(ev.Channel || "—")}</code>
             &nbsp;・&nbsp; EventID: <b>${escapeHtml(String(ev.EventID != null ? ev.EventID : "—"))}</b>
@@ -1097,7 +978,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     const status = btn.parentNode.querySelector(".mark-safe-status");
     if (!ruleId) return;
     if (!confirm(`「${title}」を安全なルールとして扱い、危険度スコアの計算から外します。\n`
-        + "（検知一覧・全体ビューには引き続き表示されます。ルールタブの「安全リスト」からいつでも解除できます）\n\nよろしいですか？")) return;
+        + "（検知一覧・全体ビューには引き続き表示されます。ルールタブの「抑制 / 安全リスト」からいつでも解除できます）\n\nよろしいですか？")) return;
     btn.disabled = true;
     if (status) status.textContent = "登録中…";
     try {
@@ -1132,11 +1013,12 @@ console.log("[app] app.js v2026-05-21-c executing");
     const jobs = await r.json();
     const tb = $("#jobs-table tbody"); tb.innerHTML = "";
     if (!jobs.length) {
-      tb.innerHTML = `<tr><td colspan="6">
+      $("#detection-card").hidden = true;
+      tb.innerHTML = `<tr><td colspan="7">
         <div class="empty-state">
           <div class="icon">📋</div>
           <div class="title">まだスキャン結果がありません</div>
-          まずはログを読み込んでスキャンしてみましょう。
+          まずは証跡を読み込んでスキャンしてみましょう。
           <div class="cta"><button class="primary" data-goto-tab="scan">🔍 スキャンへ進む</button></div>
         </div></td></tr>`;
       return;
@@ -1144,7 +1026,11 @@ console.log("[app] app.js v2026-05-21-c executing");
     const running = (s) => s === "running" || s === "queued";
     jobs.forEach(j => {
       const tr = document.createElement("tr");
+      const caseCell = j.case_name
+        ? `<span class="case-chip" title="${escapeHtml(j.case_reference || "")}">${escapeHtml(j.case_name)}</span>`
+        : `<span class="muted">—</span>`;
       tr.innerHTML = `<td><code>${j.id}</code></td>
+        <td>${caseCell}</td>
         <td class="status-${j.status}">${localizeStatus(j.status)}</td>
         <td>${fmtTime(j.started_at)}</td>
         <td>${fmtDur(j.started_at, j.finished_at)}</td>
@@ -1157,7 +1043,223 @@ console.log("[app] app.js v2026-05-21-c executing");
       tr.querySelector(".del-btn").onclick = (e) => { e.stopPropagation(); deleteJob(j.id, j.detection_count); };
       tb.appendChild(tr);
     });
+
+    // 初回表示で下半分が空にならないよう、まだ何も開いていなければ
+    // 最新の完了ジョブを自動で開く。
+    if ($("#detection-card").hidden) {
+      const first = jobs.find(j => j.status === "done") || jobs[0];
+      openDetail(first.id);
+    }
   }
+
+  // -------- cases / evidence / audit --------
+  let lastCase = null;
+  const AUDIT_ACTION_JA = {
+    "case.open": "ケース作成",
+    "scan.requested": "スキャン受付",
+    "scan.start": "スキャン開始",
+    "scan.finish": "スキャン完了",
+    "evidence.hash": "証跡ハッシュ記録",
+    "evidence.upload": "証跡アップロード",
+    "evidence.link": "証跡をスキャンに紐付け",
+    "job.delete": "ジョブ削除",
+    "jobs.clear": "全ジョブ消去",
+    "suppression.create": "抑制追加",
+    "suppression.delete": "抑制解除",
+  };
+
+  function auditDetailText(detail) {
+    if (!detail || typeof detail !== "object") return "";
+    const bits = [];
+    if (detail.case_id) bits.push("case " + detail.case_id);
+    if (detail.filename) bits.push(detail.filename);
+    if (detail.path) bits.push(detail.path);
+    if (detail.sha256) bits.push("sha256 " + String(detail.sha256).slice(0, 16) + "…");
+    if (detail.target && detail.target.path) bits.push(detail.target.path);
+    if (detail.evidence_rows != null) bits.push(detail.evidence_rows + " 証跡");
+    if (detail.status) bits.push(detail.status);
+    if (detail.detections != null) bits.push(detail.detections + " 検知");
+    if (detail.detections_removed != null) bits.push(detail.detections_removed + " 検知を削除");
+    if (!bits.length) {
+      const s = JSON.stringify(detail);
+      return s.length > 140 ? s.slice(0, 140) + "…" : s;
+    }
+    return bits.join(" ・ ");
+  }
+
+  function auditListHtml(entries) {
+    if (!entries || !entries.length) {
+      return `<div class="muted small">監査イベントはまだありません。</div>`;
+    }
+    return entries.slice().reverse().map(e => {
+      const action = AUDIT_ACTION_JA[e.action] || e.action || "—";
+      const detail = auditDetailText(e.detail);
+      return `<div class="audit-entry">
+        <time>${fmtTime(e.ts)}</time>
+        <span class="audit-action">${escapeHtml(action)}</span>
+        <span class="audit-actor">${escapeHtml(e.actor || "")}</span>
+        <span class="audit-object">${escapeHtml((e.object_type || "") + (e.object_id ? " / " + e.object_id : ""))}</span>
+        ${detail ? `<span class="audit-detail">${escapeHtml(detail)}</span>` : ""}
+      </div>`;
+    }).join("");
+  }
+
+  async function loadAudit() {
+    const list = $("#audit-list");
+    if (!list) return;
+    try {
+      const r = await fetch("/api/audit?limit=200", { cache: "no-store" });
+      const d = await r.json();
+      const count = $("#audit-count");
+      if (count) count.textContent = `${d.count || 0} 件`;
+      list.innerHTML = auditListHtml(d.entries || []);
+    } catch (e) {
+      list.innerHTML = `<div class="muted small">監査ログを読めません: ${escapeHtml(String(e))}</div>`;
+    }
+  }
+
+  async function verifyAudit() {
+    const host = $("#audit-integrity");
+    if (!host) return;
+    host.className = "audit-integrity muted small";
+    host.textContent = "検証中…";
+    try {
+      const r = await fetch("/api/audit/verify", { cache: "no-store" });
+      const d = await r.json();
+      host.classList.add(d.ok ? "ok" : "bad");
+      host.textContent = (d.ok ? "✓ " : "✗ ") + (d.message || "") +
+        (d.entries != null ? `（${d.entries} 件）` : "");
+    } catch (e) {
+      host.classList.add("bad");
+      host.textContent = "✗ 検証できません: " + String(e);
+    }
+  }
+
+  async function loadCases() {
+    const tb = $("#cases-table tbody");
+    if (!tb) return;
+    loadAudit();
+    try {
+      const r = await fetch("/api/cases", { cache: "no-store" });
+      const d = await r.json();
+      const cases = d.cases || [];
+      const count = $("#cases-count");
+      if (count) count.textContent = `${cases.length} 件`;
+      if (!cases.length) {
+        tb.innerHTML = `<tr><td colspan="7" class="muted small">ケースはまだありません。スキャン画面で案件名を入力するか、左のフォームで作成してください。</td></tr>`;
+        return;
+      }
+      tb.innerHTML = cases.map(c => `<tr data-case="${escapeHtml(c.id)}">
+        <td><b>${escapeHtml(c.name)}</b></td>
+        <td>${escapeHtml(c.reference || "—")}</td>
+        <td>${c.job_count || 0}</td>
+        <td>${c.detection_count || 0}</td>
+        <td>${c.evidence_count || 0}</td>
+        <td>${fmtTime(c.updated_at)}</td>
+        <td class="row-actions"><button class="open-case-btn" data-case="${escapeHtml(c.id)}">開く</button></td>
+      </tr>`).join("");
+      tb.querySelectorAll(".open-case-btn").forEach(b => {
+        b.onclick = () => openCase(b.dataset.case);
+      });
+    } catch (e) {
+      tb.innerHTML = `<tr><td colspan="7" class="muted small">ケースを読めません: ${escapeHtml(String(e))}</td></tr>`;
+    }
+  }
+
+  async function openCase(caseId) {
+    const card = $("#case-detail");
+    if (!card || !caseId) return;
+    try {
+      const r = await fetch(`/api/cases/${encodeURIComponent(caseId)}`, { cache: "no-store" });
+      const d = await r.json();
+      if (d.error) { alert("ケースを開けません: " + d.error); return; }
+      const c = d.case || {};
+      lastCase = { id: c.id, name: c.name || "" };
+      const scanBtn = $("#case-scan-btn");
+      if (scanBtn) scanBtn.hidden = false;
+      $("#case-detail-name").textContent = c.name || "ケース詳細";
+      $("#case-detail-meta").innerHTML = [
+        c.id ? `ID: <code>${escapeHtml(c.id)}</code>` : "",
+        c.reference ? `参照: ${escapeHtml(c.reference)}` : "",
+        `状態: ${escapeHtml(c.status || "open")}`,
+        `作成: ${fmtTime(c.created_at)}`,
+        c.description ? escapeHtml(c.description) : "",
+      ].filter(Boolean).join(" ・ ");
+
+      const etb = $("#case-evidence-table tbody");
+      const ev = d.evidence || [];
+      etb.innerHTML = ev.length ? ev.map(e => `<tr>
+        <td>${fmtTime(e.created_at)}</td>
+        <td>${escapeHtml(e.filename || "")}</td>
+        <td>${escapeHtml(e.source || "")}</td>
+        <td>${e.size != null ? fmtSize(e.size) : "—"}</td>
+        <td><code class="evidence-hash" title="${escapeHtml(e.sha256 || "")}">${escapeHtml((e.sha256 || "—").slice(0, 20))}${e.sha256 ? "…" : ""}</code></td>
+        <td>${e.job_id ? `<code>${escapeHtml(e.job_id)}</code>` : "未割当"}</td>
+      </tr>`).join("") : `<tr><td colspan="6" class="muted small">証跡はまだありません。</td></tr>`;
+
+      const jtb = $("#case-jobs-table tbody");
+      const jobs = d.jobs || [];
+      jtb.innerHTML = jobs.length ? jobs.map(j => `<tr>
+        <td><code>${escapeHtml(j.id)}</code></td>
+        <td class="status-${escapeHtml(j.status || "")}">${escapeHtml(localizeStatus(j.status))}</td>
+        <td>${fmtTime(j.started_at)}</td>
+        <td>${j.detection_count || 0}</td>
+        <td><code class="evidence-hash" title="${escapeHtml(j.evidence_sha256 || "")}">${escapeHtml((j.evidence_sha256 || "—").slice(0, 20))}${j.evidence_sha256 ? "…" : ""}</code></td>
+        <td><button class="open-case-job" data-id="${escapeHtml(j.id)}">結果を開く</button></td>
+      </tr>`).join("") : `<tr><td colspan="6" class="muted small">このケースのジョブはまだありません。</td></tr>`;
+      jtb.querySelectorAll(".open-case-job").forEach(b => {
+        b.onclick = () => { switchTab("results"); setTimeout(() => openDetail(b.dataset.id), 0); };
+      });
+
+      $("#case-audit").innerHTML = auditListHtml(d.audit || []);
+      card.hidden = false;
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e) {
+      alert("ケースを読めません: " + e);
+    }
+  }
+
+  $("#case-create-btn")?.addEventListener("click", async () => {
+    const name = ($("#case-new-name")?.value || "").trim();
+    const status = $("#case-create-status");
+    if (!name) { if (status) status.textContent = "案件名を入力してください。"; return; }
+    if (status) status.textContent = "作成中…";
+    try {
+      const r = await fetch("/api/cases", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          reference: ($("#case-new-ref")?.value || "").trim(),
+          description: ($("#case-new-desc")?.value || "").trim(),
+        }),
+      });
+      const d = await r.json();
+      if (d.error) { if (status) status.textContent = "エラー: " + d.error; return; }
+      if (status) status.textContent = "作成しました。";
+      $("#case-new-name").value = "";
+      $("#case-new-ref").value = "";
+      $("#case-new-desc").value = "";
+      await loadCases();
+      if (d.case && d.case.id) openCase(d.case.id);
+    } catch (e) {
+      if (status) status.textContent = "通信エラー: " + e;
+    }
+  });
+  $("#case-detail-close")?.addEventListener("click", () => {
+    const card = $("#case-detail"); if (card) card.hidden = true;
+  });
+  $("#case-scan-btn")?.addEventListener("click", () => {
+    if (!lastCase) return;
+    const input = $("#case-name");
+    if (input) {
+      input.value = lastCase.name || "";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    switchTab("scan");
+    setTimeout(() => input?.focus(), 0);
+  });
+  $("#audit-refresh-btn")?.addEventListener("click", loadAudit);
+  $("#audit-verify-btn")?.addEventListener("click", verifyAudit);
 
   // 単一ジョブの削除。検知・結果ファイルごと消える。
   async function deleteJob(jobId, detCount) {
@@ -1258,6 +1360,8 @@ console.log("[app] app.js v2026-05-21-c executing");
     // greyed out when "include suppressed" is on).
     if (lastJobId) openDetail(lastJobId);
     if ($("#tab-rules").classList.contains("active")) loadSuppressions();
+    if ($("#tab-dashboard").classList.contains("active")) loadDashboard();
+    if (document.body.classList.contains("public-mode")) { loadRanking?.(); loadRankingStats?.(); }
   }
 
   $("#suppress-host-rule").onclick = () => addSuppression({ rule: true, host: true });
@@ -1549,6 +1653,27 @@ console.log("[app] app.js v2026-05-21-c executing");
     }
   }
 
+  function renderJobEvidence(job) {
+    const host = $("#job-evidence");
+    if (!host) return;
+    if (!job) { host.innerHTML = ""; return; }
+    const bits = [];
+    if (job.case_name) {
+      bits.push(`<span class="case-chip">${escapeHtml(job.case_name)}</span>`);
+    }
+    if (job.evidence_kind === "live") {
+      bits.push("旧方式: 直接読取（証跡ハッシュなし）");
+    } else if (job.evidence_sha256) {
+      const kind = job.evidence_kind === "directory" ? "ディレクトリ manifest" : "ファイル";
+      bits.push(`${kind} SHA-256 <code class="evidence-hash">${escapeHtml(job.evidence_sha256)}</code>`);
+      if (job.evidence_files != null) bits.push(`${job.evidence_files} ファイル`);
+      if (job.evidence_bytes != null) bits.push(fmtSize(job.evidence_bytes));
+    } else {
+      bits.push("証跡ハッシュ未記録");
+    }
+    host.innerHTML = bits.join(" ・ ");
+  }
+
   async function openDetail(id) {
     lastJobId = id;
     $("#detection-card").hidden = false;
@@ -1568,6 +1693,7 @@ console.log("[app] app.js v2026-05-21-c executing");
       const r = await fetch(`/api/jobs/${id}?${qs}`);
       const d = await r.json();
       cache = d;
+      renderJobEvidence(d.job);
       render();
       $("#summary-btn").onclick = () => {
         if (d.summary_available) window.open(`/api/jobs/${id}/summary`, "_blank");
@@ -1632,6 +1758,8 @@ console.log("[app] app.js v2026-05-21-c executing");
           await fetch(`/api/suppressions/${row.id}`, { method: "DELETE" });
           loadSuppressions();
           if (lastJobId) openDetail(lastJobId);
+          if ($("#tab-dashboard").classList.contains("active")) loadDashboard();
+          if (document.body.classList.contains("public-mode")) { loadRanking?.(); loadRankingStats?.(); }
         };
         tb.appendChild(tr);
       });
@@ -1674,10 +1802,16 @@ console.log("[app] app.js v2026-05-21-c executing");
       c.innerHTML = `<b>${v}</b>${k}`; lvl.appendChild(c);
     });
     const cats = $("#rules-cats"); cats.innerHTML = "";
-    Object.entries(d.by_category).sort((a,b) => b[1]-a[1]).slice(0,40).forEach(([k,v]) => {
+    const catEntries = Object.entries(d.by_category).sort((a,b) => b[1]-a[1]);
+    catEntries.slice(0,16).forEach(([k,v]) => {
       const c = document.createElement("span"); c.className = "chip";
       c.innerHTML = `<b>${v}</b>${k}`; cats.appendChild(c);
     });
+    if (catEntries.length > 16) {
+      const c = document.createElement("span"); c.className = "chip";
+      c.textContent = `他 ${catEntries.length - 16} 件`;
+      cats.appendChild(c);
+    }
   }
 
   // -------- lookup tables (rules tab) --------
@@ -2180,15 +2314,15 @@ console.log("[app] app.js v2026-05-21-c executing");
     const worst = (d.top_computers || []).slice()
       .sort((a, b) => (b.sev_count || 0) - (a.sev_count || 0))[0];
     let tone, msg;
-    if (crit > 0)      { tone = "crit"; msg = `🟥 <b>緊急レベルの危険</b>が <b>${crit.toLocaleString()}</b> 件 見つかりました。すぐ確認を。`; }
-    else if (high > 0) { tone = "high"; msg = `🟧 <b>高レベルの危険</b>が <b>${high.toLocaleString()}</b> 件 見つかりました。`; }
-    else if (med > 0)  { tone = "med";  msg = `🟨 中レベルの検知が <b>${med.toLocaleString()}</b> 件。緊急・高はありません。`; }
-    else if (low > 0)  { tone = "ok";   msg = `🟩 低レベルの検知のみ（${low.toLocaleString()} 件）。目立った危険はありません。`; }
-    else               { tone = "ok";   msg = `🟩 危険な検知は見つかっていません。`; }
+    if (crit > 0)      { tone = "crit"; msg = `<b>緊急レベルの危険</b>が <b>${crit.toLocaleString()}</b> 件 見つかりました。すぐ確認を。`; }
+    else if (high > 0) { tone = "high"; msg = `<b>高レベルの危険</b>が <b>${high.toLocaleString()}</b> 件 見つかりました。`; }
+    else if (med > 0)  { tone = "med";  msg = `中レベルの検知が <b>${med.toLocaleString()}</b> 件。緊急・高はありません。`; }
+    else if (low > 0)  { tone = "ok";   msg = `低レベルの検知のみ（${low.toLocaleString()} 件）。目立った危険はありません。`; }
+    else               { tone = "ok";   msg = `危険な検知は見つかっていません。`; }
     const worstTxt = (worst && (worst.sev_count || 0) > 0)
       ? ` 最も危険なPCは <b>${escapeHtml(worst.computer || "(不明)")}</b>。` : "";
     el.className = "dash-summary tone-" + tone;
-    el.innerHTML = `🖥️ 調査したパソコン <b>${hosts.toLocaleString()}</b> 台。${msg}${worstTxt}`;
+    el.innerHTML = `調査したパソコン <b>${hosts.toLocaleString()}</b> 台。${msg}${worstTxt}`;
   }
 
   async function loadDashboard() {
@@ -2243,52 +2377,10 @@ console.log("[app] app.js v2026-05-21-c executing");
     // 「いつ・どこで・何が」を一目で: 最近の重大イベント一覧。
     loadRecentEvents();
 
-    // 運営者専用の安全リスト（スコア除外ルール）を描画。
-    loadSafeList();
-
     // Run the anomaly analyser. It can be slow on huge corpora (it walks
     // the whole detection table) so fire it asynchronously without
     // blocking the rest of the dashboard render.
     loadAnomalies();
-  }
-
-  // 運営者専用: 「安全としてマーク」したルール一覧を描画し、解除できる。
-  async function loadSafeList() {
-    const host = $("#safe-list");
-    if (!host || !document.body.classList.contains("is-admin")) return;
-    let rows = [];
-    try {
-      const r = await fetch("/api/suppressions");
-      rows = await r.json();
-    } catch (e) {
-      host.innerHTML = `<span class="muted small">一覧の取得に失敗しました。</span>`;
-      return;
-    }
-    if (!Array.isArray(rows) || !rows.length) {
-      host.innerHTML = `<span class="muted small">まだ安全リストは空です。検知の解説を開いて「安全としてマーク」を押すと、ここに登録されます。</span>`;
-      return;
-    }
-    host.innerHTML = "";
-    rows.forEach(row => {
-      const div = document.createElement("div");
-      div.className = "safe-list-row";
-      const scope = row.computer_like
-        ? `PC「${escapeHtml(row.computer_like)}」` : "全PC";
-      const label = escapeHtml(row.reason || row.rule_id || "(理由なし)");
-      div.innerHTML = `
-        <span class="safe-rule" title="${escapeHtml(row.rule_id || "")}">
-          🛡 ${label} <span class="muted small">(${scope})</span>
-        </span>
-        <button type="button" class="btn btn-ghost small safe-remove" data-id="${row.id}">解除</button>`;
-      div.querySelector(".safe-remove").addEventListener("click", async () => {
-        if (!confirm("このルールを安全リストから外し、再びスコアに数えるようにしますか？")) return;
-        await fetch(`/api/suppressions/${row.id}`, { method: "DELETE" });
-        loadSafeList();
-        loadDashboard();
-        if (document.body.classList.contains("public-mode")) { loadRanking?.(); loadRankingStats?.(); }
-      });
-      host.appendChild(div);
-    });
   }
 
   // ISO/hayabusa のタイムスタンプを "MM/DD HH:MM" に整形 (失敗時は先頭16文字)。
@@ -2330,7 +2422,7 @@ console.log("[app] app.js v2026-05-21-c executing");
                      title="クリックで解説（なにを検知したか）を表示">
           <span class="re-time">${escapeHtml(fmtWhen(ev.Timestamp))}</span>
           <span class="lvl lvl-${escapeHtml(lv)}">${escapeHtml(ja)}</span>
-          <span class="re-pc" title="${escapeHtml(ev.Computer || "")}">💻 ${escapeHtml(ev.Computer || "(不明)")}</span>
+          <span class="re-pc" title="${escapeHtml(ev.Computer || "")}">${escapeHtml(ev.Computer || "(不明)")}</span>
           <span class="re-what">${escapeHtml(ev.RuleTitle || ev.Title || "(不明)")}${meta ? ` <span class="re-meta">${escapeHtml(meta)}</span>` : ""}</span>
           <span class="re-caret">▾</span>
         </div>`;
@@ -2761,7 +2853,7 @@ console.log("[app] app.js v2026-05-21-c executing");
           ${storyHtml ? `<details class="rd-more"><summary>🧬 ATT&amp;CK 段階マップで見る（上級者向け）</summary>
             <div style="margin-top:8px">${renderKillChain(story, "stage")}</div></details>` : ""}
           <details class="rd-more"${storyHtml ? "" : " open"}>
-            <summary>📋 検知した手口の一覧（${rules.length} 件）</summary>
+            <summary>検知した手口の一覧（${rules.length} 件）</summary>
             <div style="margin-top:8px">
               ${ruleRows}
               ${chanLine}
@@ -2918,7 +3010,7 @@ console.log("[app] app.js v2026-05-21-c executing");
         <b>プロセス作成ログ</b>（Sysmon <b>EventID 1</b> または Windows セキュリティ <b>4688</b>）が必要です。
         今回のログはPowerShellやログオン等の<b>別種のイベント</b>で、親子関係の情報を持っていません。</p>
         ${presentHtml}
-        <p class="muted small">📌 ドロップダウンの「〇〇件」は<b>そのファイル全体</b>の検知数（このPC以外も含む）で、
+        <p class="muted small">ドロップダウンの「〇〇件」は<b>そのファイル全体</b>の検知数（このPC以外も含む）で、
         プロセス作成ログの数ではありません。プロセスツリーを見るには、Sysmonを有効にしたPCのログや、
         プロセス起動を含む攻撃サンプル（Webシェル・マルウェア実行など）が必要です。</p>
       </div>`;
@@ -3007,6 +3099,1206 @@ console.log("[app] app.js v2026-05-21-c executing");
   function procBasename(p) {
     const s = String(p).replace(/^["']|["']$/g, "").replace(/\\/g, "/").replace(/\/+$/,"");
     return s.split("/").pop() || s;
+  }
+
+  // -------- プロセス / ファイル関係図 --------
+  async function initRelationshipGraph() {
+    const sel = $("#graph-computer");
+    if (sel && !_graphInited) {
+      _graphInited = true;
+      try {
+        const d = await (await fetch("/api/ranking")).json();
+        const rows = Array.isArray(d) ? d : (d.ranking || []);
+        const seen = new Set();
+        rows.forEach(x => {
+          const c = x.computer || "";
+          if (!c || seen.has(c)) return;
+          seen.add(c);
+          const o = document.createElement("option");
+          o.value = c;
+          o.textContent = x.name && x.name !== c ? `${x.name}（${c}）` : c;
+          sel.appendChild(o);
+        });
+        if (sel.options.length > 1) {
+          let preferred = "";
+          if (lastJobId) {
+            try {
+              const d = await (await fetch(`/api/jobs/${encodeURIComponent(lastJobId)}?limit=1`)).json();
+              preferred = (d.detections && d.detections[0] && d.detections[0].computer) || "";
+            } catch (e) { /* fall through to newest host */ }
+          }
+          if (!preferred) {
+            const latest = rows.slice().sort((a, b) =>
+              String(b.last_seen || "").localeCompare(String(a.last_seen || "")))[0];
+            preferred = latest?.computer || "";
+          }
+          if (preferred && [...sel.options].some(o => o.value === preferred)) {
+            sel.value = preferred;
+          } else {
+            sel.selectedIndex = 1;
+          }
+        }
+      } catch (e) { /* ranking is optional */ }
+      // Fallback: /api/hosts is independent of nickname/ranking data.
+      if (sel.options.length <= 1) {
+        try {
+          const h = await (await fetch("/api/hosts")).json();
+          const rows = Array.isArray(h) ? h : (h.hosts || []);
+          const seen = new Set();
+          rows.forEach(x => {
+            const c = x.computer || "";
+            if (!c || seen.has(c)) return;
+            seen.add(c);
+            const o = document.createElement("option");
+            o.value = c;
+            o.textContent = c;
+            sel.appendChild(o);
+          });
+          if (sel.options.length > 1) sel.selectedIndex = 1;
+        } catch (e) { /* leave the placeholder */ }
+      }
+      await populateGraphJobs(sel.value);
+      sel.onchange = async () => {
+        if ($("#graph-mode")?.value === "all") await populateGraphJobsAll();
+        else await populateGraphJobs(sel.value);
+        loadRelationshipGraph();
+      };
+      const jb = $("#graph-job");
+      if (jb) jb.onchange = loadRelationshipGraph;
+      const sp = $("#graph-suppressed");
+      if (sp) sp.onchange = loadRelationshipGraph;
+      const mode = $("#graph-mode");
+      if (mode) mode.onchange = async () => {
+        const all = mode.value === "all";
+        const prevJob = $("#graph-job")?.value || "";
+        if (sp) sp.disabled = all;
+        if (sel) {
+          sel.disabled = all;
+          sel.title = all
+            ? "ログ全体モードでは対象ファイルからホストを自動判定します"
+            : "";
+          const pcLabel = sel.closest("label");
+          if (pcLabel) pcLabel.style.display = all ? "none" : "";
+        }
+        if (all) await populateGraphJobsAll();
+        else await populateGraphJobs(sel.value);
+        const jb = $("#graph-job");
+        if (prevJob && jb && [...jb.options].some(o => o.value === prevJob)) {
+          jb.value = prevJob;
+        }
+        loadRelationshipGraph();
+      };
+      const gen = $("#graph-generate");
+      if (gen) gen.onclick = async () => {
+        const all = $("#graph-mode")?.value === "all";
+        const prevJob = $("#graph-job")?.value || "";
+        if (all) await populateGraphJobsAll();
+        else await populateGraphJobs(sel.value);
+        const jb = $("#graph-job");
+        if (prevJob && jb && [...jb.options].some(o => o.value === prevJob)) {
+          jb.value = prevJob;
+        }
+        loadRelationshipGraph();
+      };
+      const center = $("#graph-center");
+      if (center) center.onclick = () => { centerRelationshipGraph(); closeGraphMenus(); };
+      const fit = $("#graph-fit");
+      if (fit) fit.onclick = () => { fitGraphView(); closeGraphMenus(); };
+      const full = $("#graph-fullscreen");
+      if (full) full.onclick = () => { toggleGraphFullscreen(); closeGraphMenus(); };
+      const viewBtn = $("#graph-view-btn");
+      if (viewBtn) viewBtn.onclick = (e) => {
+        e.stopPropagation();
+        toggleGraphMenu("#graph-view-menu");
+      };
+      const saveBtn = $("#graph-save-btn");
+      if (saveBtn) saveBtn.onclick = (e) => {
+        e.stopPropagation();
+        toggleGraphMenu("#graph-save-menu");
+      };
+      document.querySelectorAll("[data-save]").forEach(b => {
+        b.onclick = () => {
+          saveRelationshipGraph(b.dataset.save || "svg");
+          closeGraphMenus();
+        };
+      });
+      const filterBtn = $("#graph-filter-btn");
+      if (filterBtn) filterBtn.onclick = (e) => {
+        e.stopPropagation();
+        closeGraphMenus();
+        $("#graph-filter-pop")?.classList.toggle("is-hidden");
+      };
+      const filterApply = $("#graph-filter-apply");
+      if (filterApply) filterApply.onclick = () => {
+        $("#graph-filter-pop")?.classList.add("is-hidden");
+        if (_graphData) renderRelationshipGraph(_graphData);
+      };
+      const filterReset = $("#graph-filter-reset");
+      if (filterReset) filterReset.onclick = () => {
+        document.querySelectorAll("[data-gtype]").forEach(c => { c.checked = true; });
+        const f = $("#graph-from"); if (f) f.value = "";
+        const t = $("#graph-to"); if (t) t.value = "";
+        const n = $("#graph-hide-noise"); if (n) n.checked = false;
+        updateGraphFilterBadge();
+        if (_graphData) renderRelationshipGraph(_graphData);
+      };
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest(".graph-menu-wrap")) {
+          document.querySelectorAll(".graph-menu").forEach(m => m.classList.add("is-hidden"));
+        }
+        if (!e.target.closest("#graph-filter-pop") && !e.target.closest("#graph-filter-btn")) {
+          $("#graph-filter-pop")?.classList.add("is-hidden");
+        }
+      });
+      const prev = $("#graph-prev");
+      if (prev) prev.onclick = () => moveGraphMatch(-1);
+      const next = $("#graph-next");
+      if (next) next.onclick = () => moveGraphMatch(1);
+      const focusClear = $("#graph-focus-clear");
+      if (focusClear) focusClear.onclick = () => {
+        _graphFocusId = null;
+        if (_graphData) renderRelationshipGraph(_graphData);
+      };
+      const zin = $("#graph-zoom-in");
+      if (zin) zin.onclick = () => setGraphZoom(_graphZoom + 0.2);
+      const zout = $("#graph-zoom-out");
+      if (zout) zout.onclick = () => setGraphZoom(_graphZoom - 0.2);
+      const sbtn = $("#graph-search-btn");
+      if (sbtn) sbtn.onclick = runGraphSearch;
+      const sclear = $("#graph-search-clear");
+      if (sclear) sclear.onclick = clearGraphSearch;
+      const sinput = $("#graph-search");
+      if (sinput) sinput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); runGraphSearch(); }
+        if (e.key === "Escape") clearGraphSearch();
+      });
+      const gh = $("#graph-host");
+      if (gh && !gh.dataset.panBound) {
+        gh.dataset.panBound = "1";
+        let panning = false, sx = 0, sy = 0, sl = 0, st = 0, pid = null;
+        gh.addEventListener("wheel", (e) => {
+          if (!_graphSvg) return;
+          // Two-finger trackpad scrolling must not zoom the graph. Require a
+          // deliberate Ctrl/Cmd + wheel gesture; normal wheel scrolls/pans.
+          if (!(e.ctrlKey || e.metaKey)) return;
+          e.preventDefault();
+          const rect = gh.getBoundingClientRect();
+          const px = e.clientX - rect.left;
+          const py = e.clientY - rect.top;
+          const rx = (gh.scrollLeft + px) / Math.max(1, gh.scrollWidth);
+          const ry = (gh.scrollTop + py) / Math.max(1, gh.scrollHeight);
+          setGraphZoom(_graphZoom * (e.deltaY < 0 ? 1.12 : 0.89));
+          requestAnimationFrame(() => {
+            gh.scrollLeft = Math.max(0, rx * gh.scrollWidth - px);
+            gh.scrollTop = Math.max(0, ry * gh.scrollHeight - py);
+          });
+        }, { passive: false });
+        gh.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0 || !_graphSvg) return;
+          panning = true;
+          _graphDragMoved = false;
+          pid = e.pointerId;
+          sx = e.clientX; sy = e.clientY;
+          sl = gh.scrollLeft; st = gh.scrollTop;
+        });
+        gh.addEventListener("pointermove", (e) => {
+          if (!panning) return;
+          const dx = e.clientX - sx, dy = e.clientY - sy;
+          if (!_graphDragMoved && Math.abs(dx) + Math.abs(dy) > 8) {
+            _graphDragMoved = true;
+            gh.classList.add("rg-panning");
+            try { gh.setPointerCapture(pid); } catch {}
+          }
+          if (!_graphDragMoved) return;
+          gh.scrollLeft = sl - dx;
+          gh.scrollTop = st - dy;
+        });
+        const endPan = () => {
+          if (!panning) return;
+          panning = false;
+          gh.classList.remove("rg-panning");
+          try {
+            if (pid != null && gh.hasPointerCapture(pid)) gh.releasePointerCapture(pid);
+          } catch {}
+          pid = null;
+          setTimeout(() => { _graphDragMoved = false; }, 0);
+        };
+        gh.addEventListener("pointerup", endPan);
+        gh.addEventListener("pointercancel", endPan);
+      }
+      const detail = $("#graph-detail");
+      if (detail) detail.addEventListener("click", (e) => {
+        const close = e.target.closest("[data-gd-close]");
+        if (close) {
+          detail.classList.remove("has-detail");
+          detail.textContent = "ノードまたは線をクリックすると詳細を表示します。";
+          clearGraphHighlight();
+          return;
+        }
+        const fbtn = e.target.closest("[data-focus-id]");
+        if (fbtn) {
+          _graphFocusId = fbtn.dataset.focusId;
+          if (_graphData) renderRelationshipGraph(_graphData);
+          return;
+        }
+        const btn = e.target.closest("[data-open-job]");
+        if (!btn) return;
+        const jid = btn.dataset.openJob;
+        if (!jid) return;
+        switchTab("results");
+        setTimeout(() => openDetail(jid), 80);
+      });
+    }
+    if (sel) {
+      if ($("#graph-mode")?.value === "all") await populateGraphJobsAll();
+      else await populateGraphJobs(sel.value);
+    }
+    loadRelationshipGraph();
+  }
+
+  async function populateGraphJobs(comp) {
+    const jb = $("#graph-job");
+    if (!jb) return;
+    while (jb.options.length > 1) jb.remove(1);
+    jb.options[0].textContent = "全ファイル";
+    if (!comp) return;
+    const inc = $("#graph-suppressed")?.checked ? "1" : "0";
+    try {
+      const d = await (await fetch(
+        `/api/hosts/${encodeURIComponent(comp)}/relationship_jobs?include_suppressed=${inc}`
+      )).json();
+      const jobs = (d && d.jobs) || [];
+      if (!jobs.length) {
+        jb.options[0].textContent = "（このPCに関係ログなし）";
+        return;
+      }
+      jobs.forEach(j => {
+        const o = document.createElement("option");
+        o.value = j.job_id;
+        const when = j.started_at
+          ? fmtWhen(new Date(j.started_at * 1000).toISOString())
+          : j.job_id.slice(0, 8);
+        const file = String(j.evidence_path || "").split("/").pop();
+        o.textContent = `${when}・${file ? `${file}・` : ""}${(j.count || 0).toLocaleString()}件`;
+        if (j.evidence_path) o.title = j.evidence_path;
+        jb.appendChild(o);
+      });
+      if (lastJobId && !jb.value &&
+          [...jb.options].some(o => o.value === lastJobId)) {
+        jb.value = lastJobId;
+      }
+      if ($("#graph-mode")?.value === "all" && jb.options.length > 1 && !jb.value) {
+        jb.selectedIndex = 1;
+      }
+    } catch (e) { /* keep "全ファイル" */ }
+  }
+
+  async function populateGraphJobsAll() {
+    const jb = $("#graph-job");
+    if (!jb) return;
+    while (jb.options.length > 1) jb.remove(1);
+    jb.options[0].textContent = "対象ファイルを選択";
+    try {
+      const d = await (await fetch("/api/jobs")).json();
+      const jobs = (Array.isArray(d) ? d : (d.jobs || []))
+        .filter(j => j && j.evidence_path);
+      jobs.forEach(j => {
+        const o = document.createElement("option");
+        o.value = j.id;
+        const when = j.started_at
+          ? fmtWhen(new Date(j.started_at * 1000).toISOString())
+          : String(j.id).slice(0, 8);
+        o.textContent = `${when}・${String(j.evidence_path).split("/").pop() || j.id}`;
+        jb.appendChild(o);
+      });
+      if (jb.options.length > 1) {
+        if (lastJobId && [...jb.options].some(o => o.value === lastJobId)) {
+          jb.value = lastJobId;
+        } else {
+          jb.selectedIndex = 1;
+        }
+      } else {
+        jb.options[0].textContent = "（証跡パス付きジョブなし）";
+      }
+    } catch (e) {
+      jb.options[0].textContent = "（ジョブ一覧を取得できません）";
+    }
+  }
+
+  async function loadRelationshipGraph() {
+    const host = $("#graph-host");
+    if (!host) return;
+    const comp = $("#graph-computer")?.value || "";
+    const count = $("#graph-count");
+    const mode = $("#graph-mode")?.value || "detections";
+    const jobSel = $("#graph-job");
+    if (!comp && mode !== "all") {
+      _graphData = null;
+      _graphSvg = null;
+      host.style.height = "";
+      host.innerHTML = `<div class="empty-state"><div class="icon">🕸️</div>
+        <div class="title">PC を選んで関係図を生成してください</div>
+        プロセスの起動とファイル作成の検知から関係を復元します。</div>`;
+      if (count) count.textContent = "";
+      return;
+    }
+    if (mode === "all" && !(jobSel?.value || "")) {
+      _graphData = null;
+      _graphSvg = null;
+      host.style.height = "";
+      host.innerHTML = `<div class="empty-state"><div class="icon">🕸️</div>
+        <div class="title">ログ全体モードでは対象ファイルを選んでください</div>
+        検知だけでなく、そのログに含まれるプロセス作成・ファイル作成・接続を読みます。</div>`;
+      if (count) count.textContent = "";
+      return;
+    }
+    host.innerHTML = `<div class="muted small" style="padding:14px">関係図を生成中…${
+      mode === "all" ? "（ログ全体を読み込むため時間がかかる場合があります）" : ""}</div>`;
+    if (count) count.textContent = "";
+    const qs = new URLSearchParams();
+    if (mode === "all") qs.set("mode", "all");
+    const job = jobSel?.value || "";
+    if (job) qs.set("job", job);
+    if (mode !== "all" && $("#graph-suppressed")?.checked) qs.set("include_suppressed", "1");
+    let data;
+    try {
+      const endpoint = mode === "all"
+        ? `/api/graph/relationship_graph?${qs}`
+        : `/api/hosts/${encodeURIComponent(comp)}/relationship_graph?${qs}`;
+      const r = await fetch(endpoint);
+      data = await r.json();
+    } catch (e) {
+      host.innerHTML = `<div class="muted small" style="padding:14px;color:#c0392b">
+        関係図の取得に失敗しました: ${escapeHtml(String(e))}</div>`;
+      return;
+    }
+    if (data.error) {
+      host.innerHTML = `<div class="muted small" style="padding:14px">エラー: ${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    _graphData = data;
+    renderRelationshipGraph(data);
+  }
+
+  function graphEmptyHtml(data) {
+    const notes = (data.notes || []).map(n => `<p>${escapeHtml(n)}</p>`).join("");
+    const present = (data.present || []).map(p =>
+      `<li><b>${escapeHtml(p.channel || "(不明)")}</b> ・ EventID ${escapeHtml(String(p.event_id))} <span class="muted small">— ${p.count.toLocaleString()}件</span></li>`
+    ).join("");
+    return `<div class="empty-state" style="text-align:left;max-width:700px;margin:0 auto">
+      <div style="text-align:center"><div class="icon">🕸️</div>
+      <div class="title">関係を描けるログがありません</div></div>
+      ${notes || "<p>プロセス作成またはファイル作成の検知が必要です。</p>"}
+      ${present ? `<div class="pt-present"><div class="muted small">このデータに含まれるイベント（上位）:</div>
+        <ul class="pt-present-list">${present}</ul></div>` : ""}
+    </div>`;
+  }
+
+  function graphFilterState() {
+    const types = new Set();
+    document.querySelectorAll("[data-gtype]").forEach(c => {
+      if (c.checked) types.add(c.dataset.gtype);
+    });
+    const from = $("#graph-from")?.value || "";
+    const to = $("#graph-to")?.value || "";
+    const hideNoise = !!$("#graph-hide-noise")?.checked;
+    return { types, from, to, hideNoise };
+  }
+
+  function updateGraphFilterBadge() {
+    const s = graphFilterState();
+    let n = 0;
+    if (s.types.size < 5) n++;
+    if (s.from || s.to) n++;
+    if (s.hideNoise) n++;
+    const b = $("#graph-filter-badge");
+    if (b) b.textContent = n ? `(${n})` : "";
+  }
+
+  function filterGraphView(data) {
+    const s = graphFilterState();
+    const typeOk = (n) => s.types.has(n.type);
+    const fromMs = s.from ? Date.parse(s.from) : NaN;
+    const toMs = s.to ? Date.parse(s.to) : NaN;
+    const timeOk = (n) => {
+      const t0 = Date.parse(n.ts || "");
+      const t1 = Date.parse(n.last_ts || n.ts || "");
+      if (Number.isFinite(fromMs) && Number.isFinite(t1) && t1 < fromMs) return false;
+      if (Number.isFinite(toMs) && Number.isFinite(t0) && t0 > toMs) return false;
+      return true;
+    };
+    let nodes = (data.nodes || []).filter(n => typeOk(n) && timeOk(n));
+    let allowed = new Set(nodes.map(n => n.id));
+    let edges = (data.edges || []).filter(e => allowed.has(e.from) && allowed.has(e.to));
+
+    if (_graphFocusId) {
+      if (!allowed.has(_graphFocusId)) {
+        _graphFocusId = null;
+      } else {
+        const keep = new Set([_graphFocusId]);
+        edges.forEach(e => {
+          if (e.from === _graphFocusId || e.to === _graphFocusId) {
+            keep.add(e.from); keep.add(e.to);
+          }
+        });
+        nodes = nodes.filter(n => keep.has(n.id));
+        allowed = keep;
+        edges = edges.filter(e => allowed.has(e.from) && allowed.has(e.to));
+      }
+    }
+
+    if (s.hideNoise) {
+      const degree = new Map();
+      edges.forEach(e => {
+        degree.set(e.from, (degree.get(e.from) || 0) + 1);
+        degree.set(e.to, (degree.get(e.to) || 0) + 1);
+      });
+      nodes = nodes.filter(n => {
+        if ((degree.get(n.id) || 0) === 0) return false;
+        if (data.mode !== "all" && !n.detection
+            && (n.type === "file" || n.type === "network" || n.type === "object")
+            && (degree.get(n.id) || 0) <= 1) return false;
+        return true;
+      });
+      allowed = new Set(nodes.map(n => n.id));
+      edges = edges.filter(e => allowed.has(e.from) && allowed.has(e.to));
+    }
+
+    const countType = (t) => nodes.filter(n => n.type === t).length;
+    return {
+      nodes, edges,
+      stats: {
+        nodes: nodes.length,
+        processes: countType("process"),
+        identities: countType("identity"),
+        files: countType("file"),
+        objects: countType("object"),
+        network: countType("network"),
+        edges: edges.length,
+        truncated: data.stats?.truncated || false,
+      },
+    };
+  }
+
+  function renderRelationshipGraph(data) {
+    const host = $("#graph-host");
+    if (!host) return;
+    const count = $("#graph-count");
+    if (!data.has_data) {
+      _graphSvg = null;
+      host.style.height = "";
+      host.innerHTML = graphEmptyHtml(data);
+      if (count) count.textContent = "";
+      const detail = $("#graph-detail");
+      if (detail) {
+        detail.classList.remove("has-detail");
+        const scope = data.mode === "all"
+          ? "対象: このファイルの全イベント"
+          : (data.job_id ? "対象: このファイルの検知" : "対象: ホスト全体の検知");
+        detail.textContent = [scope, data.source ? `読込: ${data.source}` : "",
+          (data.notes || []).join(" ")].filter(Boolean).join(" ・ ");
+      }
+      return;
+    }
+    const view = filterGraphView(data);
+    if (!view.nodes.length) {
+      _graphSvg = null;
+      host.style.height = "";
+      host.innerHTML = `<div class="empty-state"><div class="icon">🕸️</div>
+        <div class="title">フィルタ条件に合うノードがありません</div>
+        表示タイプ・時間範囲・「ノイズを隠す」を調整してください。</div>`;
+      if (count) count.textContent = `0 / ${data.nodes.length} ノード`;
+      return;
+    }
+    const layout = layoutRelationshipGraph(view.nodes, view.edges);
+    _graphSize = { w: layout.width, h: layout.height };
+    _graphLayout = layout;
+    host.style.height = (layout.height > 620 ? "620px" : Math.max(330, layout.height + 18) + "px");
+    const svg = svgEl("svg", {
+      viewBox: `0 0 ${layout.width} ${layout.height}`,
+      class: "rg-svg",
+      role: "img",
+      "aria-label": "プロセスとファイルの関係図",
+    });
+    const defs = svgEl("defs", {}, svg);
+    [
+      ["arrow-hit", "#b45309"],
+      ["arrow-proc", "#2f6fb0"],
+      ["arrow-file", "#7a8699"],
+      ["arrow-net", "#7b4fa0"],
+      ["arrow-audit", "#2e7d6b"],
+    ].forEach(([id, color]) => {
+      const marker = svgEl("marker", {
+        id, viewBox: "0 0 10 10", refX: "9", refY: "5",
+        markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
+      }, defs);
+      svgEl("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: color }, marker);
+    });
+
+    // Edges first so nodes sit on top.
+    (layout.edges || []).forEach(edge => {
+      const a = layout.pos.get(edge.from);
+      const b = layout.pos.get(edge.to);
+      if (!a || !b) return;
+      const g = svgEl("g", { class: "rg-edge rg-edge-" + edge.type,
+        "data-edge-from": edge.from, "data-edge-to": edge.to,
+        "data-edge-label": edge.label || "",
+        "data-edge-type": edge.type || "",
+        "data-edge-count": String(edge.count || 1) }, svg);
+      const path = edgePath(a, b, edge.type);
+      const color = edge.inferred ? "#7a8699"
+        : (edge.type === "spawn" ? "#2f6fb0"
+          : (edge.type === "connect" || edge.type === "resolve" ? "#7b4fa0"
+            : (edge.type === "audit" ? "#2e7d6b" : "#b45309")));
+      const line = svgEl("path", {
+        d: path.d, fill: "none", stroke: color,
+        "stroke-width": edge.inferred ? "1.4" : "1.8",
+        "stroke-dasharray": edge.inferred ? "5 4" : "",
+        "marker-end": `url(#${edge.inferred ? "arrow-file" : (edge.type === "spawn" ? "arrow-proc" : (edge.type === "connect" || edge.type === "resolve" ? "arrow-net" : (edge.type === "audit" ? "arrow-audit" : "arrow-hit")))})`,
+      }, g);
+      const title = svgEl("title", {}, line);
+      title.textContent = `${edge.label}${edge.count > 1 ? ` ×${edge.count}` : ""}`;
+      if (view.edges.length <= 70) {
+        const label = svgEl("text", {
+          x: path.mx, y: path.my, class: "rg-edge-label",
+          "text-anchor": "middle",
+        }, g);
+        label.textContent = edge.label;
+      }
+    });
+
+    // Nodes.
+    (view.nodes || []).forEach(node => {
+      const p = layout.pos.get(node.id);
+      if (!p) return;
+      const hit = !!node.detection;
+      const kind = node.type === "file" ? "rg-node-file"
+        : node.type === "network" ? "rg-node-net"
+          : node.type === "identity" ? "rg-node-identity"
+            : node.type === "object" ? "rg-node-object" : "rg-node-proc";
+      const cls = "rg-node " + kind
+        + (hit ? " rg-node-hit" : "") + (node.synthetic ? " rg-node-synth" : "");
+      const g = svgEl("g", {
+        class: cls, "data-node-id": node.id,
+        transform: `translate(${p.x},${p.y})`,
+      }, svg);
+      svgEl("rect", {
+        x: 0, y: 0, width: p.w, height: p.h, rx: 8,
+        class: "rg-box",
+      }, g);
+      const label = svgEl("text", { x: 10, y: 20, class: "rg-label" }, g);
+      label.textContent = truncateText(node.label || node.path || "(不明)", 30);
+      const sub = svgEl("text", { x: 10, y: 37, class: "rg-sub" }, g);
+      if (node.type === "file") {
+        sub.textContent = node.count > 1 ? `作成 ×${node.count}` : "作成されたファイル";
+      } else if (node.type === "network") {
+        const bits = [];
+        if (node.protocol) bits.push(String(node.protocol).toUpperCase());
+        if (node.port) bits.push("port " + node.port);
+        if (node.ip && node.ip !== node.host) bits.push(node.ip);
+        sub.textContent = truncateText(bits.join(" ・ ") || "通信先", 40);
+      } else if (node.type === "identity") {
+        sub.textContent = truncateText([node.domain, node.account].filter(Boolean).join(" ・ ") || "ユーザー / アカウント", 40);
+      } else if (node.type === "object") {
+        sub.textContent = truncateText(node.object_type || "対象オブジェクト", 40);
+      } else {
+        const bits = [];
+        if (node.pid) bits.push("PID " + node.pid);
+        if (node.user) bits.push(node.user);
+        sub.textContent = truncateText(bits.join(" ・ ") || "プロセス", 40);
+      }
+      if (node.synthetic) {
+        const s = svgEl("text", { x: p.w - 10, y: 20, class: "rg-synth-tag",
+          "text-anchor": "end" }, g);
+        s.textContent = "推定";
+      }
+      if (hit) {
+        const h = svgEl("text", {
+          x: p.w - 10, y: p.h - 9, class: "rg-hit-tag", "text-anchor": "end",
+        }, g);
+        h.textContent = "検知";
+      }
+      const title = svgEl("title", {}, g);
+      const detail = node.type === "file"
+        ? `${node.path || ""}\n作成プロセス: ${node.creator_image || "(不明)"}`
+        : node.type === "network"
+          ? `${node.label || ""}\n${node.ip || ""}${node.port ? ":" + node.port : ""}\n${node.protocol || ""}`
+          : node.type === "identity"
+            ? `${node.label || ""}\n${node.domain || ""}\\${node.account || ""}`
+            : node.type === "object"
+              ? `${node.label || ""}\n${node.path || ""}\n${node.object_type || ""}`
+              : `${node.image || ""}\n${node.cmdline || ""}\n${node.ts || ""}`;
+      title.textContent = detail.trim();
+    });
+
+    host.innerHTML = "";
+    host.appendChild(svg);
+    _graphSvg = svg;
+    _graphZoom = 1;
+    _graphMatches = [];
+    _graphMatchIndex = 0;
+    host.classList.remove("rg-searching");
+    host.classList.toggle("rg-dense", (view.edges || []).length > 40);
+    const sc = $("#graph-search-count");
+    if (sc) sc.textContent = "";
+    const si = $("#graph-search");
+    if (si) si.value = "";
+    updateGraphFilterBadge();
+    const fb = $("#graph-focus-badge");
+    if (fb) {
+      fb.classList.toggle("is-hidden", !_graphFocusId);
+      const fn = $("#graph-focus-name");
+      if (fn && _graphFocusId) {
+        const n = (data.nodes || []).find(x => x.id === _graphFocusId);
+        fn.textContent = n?.label || n?.path || _graphFocusId;
+      }
+    }
+    applyGraphZoom();
+    if (count) {
+      const s = view.stats || {};
+      const parts = [`${s.processes || 0} プロセス`];
+      if (s.identities) parts.push(`${s.identities} ユーザー`);
+      if (s.objects) parts.push(`${s.objects} 対象`);
+      parts.push(`${s.files || 0} ファイル`);
+      parts.push(`${s.network || 0} ネットワーク`);
+      parts.push(`${s.edges || 0} 関係`);
+      const filtered = view.nodes.length !== (data.nodes || []).length
+        || view.edges.length !== (data.edges || []).length;
+      count.textContent = parts.join(" / ")
+        + (filtered ? `（表示 ${view.nodes.length} / 全 ${(data.nodes || []).length} ノード）` : "")
+        + (s.truncated ? "（上限で一部省略）" : "");
+    }
+    const detail = $("#graph-detail");
+    if (detail) {
+      detail.classList.remove("has-detail");
+      const scope = data.mode === "all"
+        ? "対象: このファイルの全イベント"
+        : (data.job_id ? "対象: このファイルの検知" : "対象: ホスト全体の検知");
+      const src = data.source ? `読込: ${data.source}` : "";
+      detail.textContent = [scope, src, (data.notes || []).join(" ")]
+        .filter(Boolean).join(" ・ ") || "ノードをクリックすると詳細を表示します。";
+    }
+    host.onclick = (e) => {
+      if (_graphDragMoved) { _graphDragMoved = false; return; }
+      const g = e.target.closest("[data-node-id]");
+      if (g && _graphData) {
+        graphShowNode(g.dataset.nodeId);
+        highlightGraphNode(g.dataset.nodeId);
+        return;
+      }
+      const edgeEl = e.target.closest(".rg-edge");
+      if (edgeEl && _graphData) {
+        graphShowEdge(edgeEl);
+        return;
+      }
+      clearGraphHighlight();
+      const detail = $("#graph-detail");
+      if (detail) {
+        detail.classList.remove("has-detail");
+        detail.textContent = "";
+      }
+    };
+  }
+
+  function truncateText(s, n) {
+    s = String(s || "");
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+
+  function svgEl(tag, attrs, parent) {
+    const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    if (attrs) {
+      Object.entries(attrs).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) e.setAttribute(k, String(v));
+      });
+    }
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  function edgePath(a, b, type) {
+    const acx = a.x + a.w / 2, acy = a.y + a.h / 2;
+    const bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+    let sx, sy, tx, ty;
+    if (type === "spawn") {
+      sx = acx < bcx ? a.x + a.w : a.x;
+      sy = acy;
+      tx = acx < bcx ? b.x : b.x + b.w;
+      ty = bcy;
+    } else if (type === "create" || type === "connect" || type === "resolve"
+      || type === "audit") {
+      sx = acx; sy = a.y + a.h;
+      tx = bcx; ty = b.y;
+    } else {
+      sx = acx; sy = a.y;
+      tx = bcx; ty = b.y + b.h;
+    }
+    const dx = tx - sx, dy = ty - sy;
+    const bend = Math.max(20, Math.min(70, Math.abs(dx) * 0.18 + Math.abs(dy) * 0.12));
+    const c1x = sx + (type === "spawn" ? dx * 0.35 : 0);
+    const c1y = sy + (type === "spawn" ? 0 : (dy < 0 ? -bend : bend));
+    const c2x = tx - (type === "spawn" ? dx * 0.35 : 0);
+    const c2y = ty - (type === "spawn" ? 0 : (dy < 0 ? -bend : bend));
+    return {
+      d: `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`,
+      mx: (sx + tx) / 2,
+      my: (sy + ty) / 2,
+    };
+  }
+
+  function layoutRelationshipGraph(nodes, edges) {
+    const byId = new Map((nodes || []).map(n => [n.id, n]));
+    const procs = (nodes || []).filter(n => n.type === "process" || n.type === "identity");
+    const leaves = (nodes || []).filter(n => n.type === "file" || n.type === "network" || n.type === "object");
+    const spawn = (edges || []).filter(e => e.type === "spawn");
+    const children = new Map();
+    const hasParent = new Set();
+    spawn.forEach(e => {
+      if (!byId.has(e.from) || !byId.has(e.to)) return;
+      if (!children.has(e.from)) children.set(e.from, []);
+      children.get(e.from).push(e.to);
+      hasParent.add(e.to);
+    });
+    const level = new Map();
+    const queue = [];
+    procs.forEach(n => {
+      if (!hasParent.has(n.id)) { level.set(n.id, 0); queue.push(n.id); }
+    });
+    for (let qi = 0; qi < queue.length; qi++) {
+      const id = queue[qi];
+      const lv = level.get(id) || 0;
+      (children.get(id) || []).forEach(cid => {
+        const cand = lv + 1;
+        if (!level.has(cid) || cand < (level.get(cid) || 0)) {
+          level.set(cid, cand);
+          queue.push(cid);
+        }
+      });
+    }
+    // Cycles / disconnected nodes: give every remaining process a level.
+    procs.forEach(n => { if (!level.has(n.id)) level.set(n.id, 0); });
+    const byLevel = new Map();
+    procs.forEach(n => {
+      const lv = level.get(n.id) || 0;
+      if (!byLevel.has(lv)) byLevel.set(lv, []);
+      byLevel.get(lv).push(n);
+    });
+    const pos = new Map();
+    const procW = 200, procH = 54, fileW = 230, fileH = 46;
+    let maxProcY = 0;
+    [...byLevel.keys()].sort((a, b) => a - b).forEach(lv => {
+      const list = byLevel.get(lv).sort((a, b) =>
+        String(a.ts || "").localeCompare(String(b.ts || "")) ||
+        String(a.label || "").localeCompare(String(b.label || "")));
+      list.forEach((n, i) => {
+        const x = 60 + lv * 280 + (n.type === "identity" ? i * 300 : 0);
+        const y = 70 + (n.type === "identity" ? 0 : i * 110);
+        pos.set(n.id, { x, y, w: procW, h: procH, node: n });
+        maxProcY = Math.max(maxProcY, y + procH);
+      });
+    });
+
+    // Files and network destinations are grouped under the process that
+    // created / contacted them.
+    const creatorOf = new Map();
+    (edges || []).filter(e => e.type === "create" || e.type === "connect"
+      || e.type === "resolve" || e.type === "audit").forEach(e => {
+      if (!creatorOf.has(e.to)) creatorOf.set(e.to, e.from);
+    });
+    const groups = new Map();
+    leaves.forEach(n => {
+      const c = creatorOf.get(n.id) || "";
+      if (!groups.has(c)) groups.set(c, []);
+      groups.get(c).push(n);
+    });
+    const baseY = maxProcY + 90;
+    const orderedGroups = [...groups.entries()].sort((a, b) => {
+      const pa = pos.get(a[0]), pb = pos.get(b[0]);
+      return (pa ? pa.x : 1e9) - (pb ? pb.x : 1e9);
+    });
+    orderedGroups.forEach(([cid, list], gi) => {
+      const cp = pos.get(cid);
+      const x = cp ? cp.x : 60 + (gi % 5) * 250;
+      list.sort((a, b) => String(a.ts || "").localeCompare(String(b.ts || "")));
+      list.forEach((n, i) => {
+        const y = baseY + i * 66;
+        pos.set(n.id, { x, y, w: fileW, h: fileH, node: n });
+      });
+    });
+    // Any orphan leaves in a grid.
+    const orphans = leaves.filter(n => !pos.has(n.id));
+    const maxRows = Math.max(1, ...[...groups.values()].map(g => g.length));
+    orphans.forEach((n, i) => {
+      const x = 60 + (i % 5) * 250;
+      const y = baseY + maxRows * 66 + Math.floor(i / 5) * 66;
+      pos.set(n.id, { x, y, w: fileW, h: fileH, node: n });
+    });
+
+    let width = 1000, height = 600;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    pos.forEach(p => {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + p.w);
+      maxY = Math.max(maxY, p.y + p.h);
+    });
+    if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+    const pad = 70;
+    width = Math.max(900, contentW + pad * 2);
+    height = Math.max(420, contentH + pad * 2);
+    // Center small graphs instead of leaving everything in the top-left.
+    const ox = (width - contentW) / 2 - minX;
+    const oy = (height - contentH) / 2 - minY;
+    pos.forEach(p => { p.x += ox; p.y += oy; });
+    return { pos, edges: edges || [], width, height };
+  }
+
+  function graphShowNode(id) {
+    const node = (_graphData?.nodes || []).find(n => n.id === id);
+    const host = $("#graph-detail");
+    if (!node || !host) return;
+    const typeLabel = {
+      process: "プロセス", file: "ファイル", network: "ネットワーク",
+      identity: "ユーザー", object: "対象オブジェクト",
+    }[node.type] || "ノード";
+    const rows = [];
+    const add = (k, v) => {
+      if (v !== undefined && v !== null && String(v) !== "") {
+        rows.push(`<div class="gd-k">${escapeHtml(k)}</div><div class="gd-v">${v}</div>`);
+      }
+    };
+    const code = (v) => `<code>${escapeHtml(String(v))}</code>`;
+
+    if (node.type === "file") {
+      const path = String(node.path || "");
+      const slash = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+      const dir = slash >= 0 ? path.slice(0, slash) : "";
+      const name = slash >= 0 ? path.slice(slash + 1) : (node.label || path);
+      add("ディレクトリ", dir ? code(dir) : "—");
+      add("ファイル名", escapeHtml(name));
+      add("フルパス", path ? code(path) : "—");
+      if (node.creator_image) add("作成プロセス", code(node.creator_image));
+      add("作成イベント", `${node.count || 0} 件`);
+    } else if (node.type === "network") {
+      add("接続先", escapeHtml(node.label || ""));
+      if (node.host) add("ホスト", code(node.host));
+      if (node.ip) add("IP", code(node.ip));
+      if (node.port) add("ポート", escapeHtml(String(node.port)));
+      if (node.protocol) add("プロトコル", escapeHtml(node.protocol));
+      if (node.creator_image) add("接続元", code(node.creator_image));
+      add("通信イベント", `${node.count || 0} 件`);
+    } else if (node.type === "identity") {
+      if (node.domain) add("ドメイン", escapeHtml(node.domain));
+      if (node.account) add("アカウント", code(node.account));
+      add("操作イベント", `${node.count || 0} 件`);
+    } else if (node.type === "object") {
+      if (node.object_type) add("種別", escapeHtml(node.object_type));
+      if (node.path) add("パス / DN", code(node.path));
+      add("操作イベント", `${node.count || 0} 件`);
+    } else {
+      if (node.image) add("実行ファイル", code(node.image));
+      if (node.cmdline) add("コマンドライン", code(node.cmdline));
+      if (node.pid) add("PID", escapeHtml(String(node.pid)));
+      if (node.user) add("ユーザー", escapeHtml(node.user));
+      if (node.integrity) add("整合性レベル", escapeHtml(node.integrity));
+      if (node.synthetic) add("備考", "推定ノード（起動元の実行情報なし）");
+    }
+    if (node.ts) add("初回", escapeHtml(fmtWhen(node.ts)));
+    if (node.last_ts && node.last_ts !== node.ts) {
+      add("最終", escapeHtml(fmtWhen(node.last_ts)));
+    }
+    if (node.detection) {
+      add("検知", `<span class="gd-hit">${escapeHtml(node.detection.rule_title || "")}</span>（${escapeHtml(node.detection.level || "")}）`);
+    }
+    const detectBtn = node.detection
+      ? `<button class="ghost-btn small" data-open-job="${escapeHtml(node.detection.job_id || "")}">検知を開く</button>`
+      : "";
+    const focusBtn = `<button class="ghost-btn small" data-focus-id="${escapeHtml(node.id)}">このノードにフォーカス</button>`;
+    host.classList.add("has-detail");
+    host.innerHTML = `<div class="gd-head">
+        <span class="gd-type">${typeLabel}</span>
+        <span class="gd-name">${escapeHtml(node.label || node.path || "(不明)")}</span>
+        ${detectBtn}
+        ${focusBtn}
+        <button class="gd-close" type="button" data-gd-close title="閉じる">×</button>
+      </div>
+      <div class="gd-grid">${rows.join("")}</div>`;
+  }
+
+  function graphShowEdge(edgeEl) {
+    const host = $("#graph-detail");
+    if (!host) return;
+    const from = (_graphData?.nodes || []).find(n => n.id === edgeEl.dataset.edgeFrom);
+    const to = (_graphData?.nodes || []).find(n => n.id === edgeEl.dataset.edgeTo);
+    const label = edgeEl.dataset.edgeLabel || "関係";
+    const type = edgeEl.dataset.edgeType || "";
+    const count = edgeEl.dataset.edgeCount || "1";
+    const typeJa = {
+      spawn: "起動", create: "作成", execute: "実行（推定）",
+      connect: "接続", resolve: "名前解決", audit: "監査操作",
+    }[type] || type;
+    host.classList.add("has-detail");
+    host.innerHTML = `<div class="gd-head">
+        <span class="gd-type">関係</span>
+        <span class="gd-name">${escapeHtml(label)}</span>
+        <button class="gd-close" type="button" data-gd-close title="閉じる">×</button>
+      </div>
+      <div class="gd-grid">
+        <div class="gd-k">関係種別</div><div class="gd-v">${escapeHtml(typeJa)}</div>
+        <div class="gd-k">From</div><div class="gd-v">${escapeHtml(from?.label || from?.path || edgeEl.dataset.edgeFrom || "")}</div>
+        <div class="gd-k">To</div><div class="gd-v">${escapeHtml(to?.label || to?.path || edgeEl.dataset.edgeTo || "")}</div>
+        <div class="gd-k">イベント数</div><div class="gd-v">${escapeHtml(String(count))} 件</div>
+      </div>`;
+  }
+
+  function graphSearchText(node) {
+    return [node.label, node.image, node.path, node.cmdline, node.host,
+      node.ip, node.account, node.domain, node.object_type,
+      node.creator_image].filter(Boolean).join(" ").toLowerCase();
+  }
+
+  function runGraphSearch() {
+    const input = $("#graph-search");
+    const term = (input?.value || "").trim().toLowerCase();
+    const count = $("#graph-search-count");
+    if (!term) { clearGraphSearch(); return; }
+    if (!_graphData || !_graphSvg) {
+      if (count) count.textContent = "先に図を生成してください";
+      return;
+    }
+    const visible = _graphLayout?.pos;
+    _graphMatches = (_graphData.nodes || []).filter(n =>
+      (!visible || visible.has(n.id)) && graphSearchText(n).includes(term));
+    _graphMatchIndex = 0;
+    if (!_graphMatches.length) {
+      clearGraphHighlight();
+      if (count) count.textContent = "0 件";
+      return;
+    }
+    focusGraphMatch();
+  }
+
+  function focusGraphMatch() {
+    if (!_graphMatches.length) return;
+    const count = $("#graph-search-count");
+    if (count) {
+      count.textContent = _graphMatches.length > 1
+        ? `${_graphMatchIndex + 1} / ${_graphMatches.length} 件`
+        : "1 件ヒット";
+    }
+    applyGraphHighlight(_graphMatches.map(n => n.id), false);
+    graphShowNode(_graphMatches[_graphMatchIndex].id);
+    focusGraphNode(_graphMatches[_graphMatchIndex].id);
+  }
+
+  function moveGraphMatch(dir) {
+    if (!_graphMatches.length) return;
+    _graphMatchIndex = (_graphMatchIndex + dir + _graphMatches.length)
+      % _graphMatches.length;
+    focusGraphMatch();
+  }
+
+  function clearGraphSearch() {
+    _graphMatches = [];
+    _graphMatchIndex = 0;
+    clearGraphHighlight();
+    const count = $("#graph-search-count");
+    if (count) count.textContent = "";
+  }
+
+  function clearGraphHighlight() {
+    const host = $("#graph-host");
+    if (host) host.classList.remove("rg-searching");
+    document.querySelectorAll("#graph-host .rg-node, #graph-host .rg-edge")
+      .forEach(el => el.classList.remove("rg-dim", "rg-match"));
+  }
+
+  function highlightGraphNode(id) {
+    applyGraphHighlight([id], true);
+  }
+
+  function applyGraphHighlight(matchIds, includeNeighbors) {
+    const ids = new Set(matchIds || []);
+    if (!ids.size) { clearGraphHighlight(); return; }
+    const related = new Set(ids);
+    if (includeNeighbors) {
+      (_graphData?.edges || []).forEach(e => {
+        if (ids.has(e.from) || ids.has(e.to)) {
+          related.add(e.from);
+          related.add(e.to);
+        }
+      });
+    }
+    const host = $("#graph-host");
+    if (host) host.classList.add("rg-searching");
+    document.querySelectorAll("#graph-host .rg-node").forEach(el => {
+      const id = el.dataset.nodeId;
+      el.classList.toggle("rg-match", ids.has(id));
+      el.classList.toggle("rg-dim", !related.has(id));
+    });
+    document.querySelectorAll("#graph-host .rg-edge").forEach(el => {
+      const match = ids.has(el.dataset.edgeFrom) || ids.has(el.dataset.edgeTo);
+      el.classList.toggle("rg-match", match);
+      el.classList.toggle("rg-dim", !match);
+    });
+  }
+
+  function focusGraphNode(id) {
+    const host = $("#graph-host");
+    const svg = _graphSvg;
+    const p = _graphLayout?.pos.get(id);
+    if (!host || !svg || !p) return;
+    // When the user searches from a zoomed-out view, bring the view back to
+    // 100% so the matching node and its arrows are readable.
+    if (_graphZoom < 1) {
+      _graphZoom = 1;
+      applyGraphZoom();
+    }
+    const rect = svg.getBoundingClientRect();
+    const scale = _graphSize.w ? rect.width / _graphSize.w : 1;
+    const x = (p.x + p.w / 2) * scale;
+    const y = (p.y + p.h / 2) * scale;
+    const nodeEl = document.querySelector(
+      `#graph-host .rg-node[data-node-id="${id}"]`);
+    if (nodeEl && nodeEl.scrollIntoView) {
+      nodeEl.scrollIntoView({ block: "center", inline: "center",
+                              behavior: "smooth" });
+      return;
+    }
+    host.scrollTo({
+      left: Math.max(0, x - host.clientWidth / 2),
+      top: Math.max(0, y - host.clientHeight / 2),
+      behavior: "smooth",
+    });
+  }
+
+  function setGraphZoom(z) {
+    _graphZoom = Math.max(0.2, Math.min(2.5, z));
+    applyGraphZoom();
+  }
+  function applyGraphZoom() {
+    const label = $("#graph-zoom-label");
+    if (label) label.textContent = Math.round(_graphZoom * 100) + "%";
+    if (_graphSvg) {
+      _graphSvg.style.width = (_graphZoom * 100) + "%";
+      _graphSvg.style.height = "auto";
+    }
+  }
+  function closeGraphMenus() {
+    document.querySelectorAll(".graph-menu").forEach(m => m.classList.add("is-hidden"));
+  }
+  function toggleGraphMenu(sel) {
+    const menu = document.querySelector(sel);
+    if (!menu) return;
+    const show = menu.classList.contains("is-hidden");
+    closeGraphMenus();
+    if (show) menu.classList.remove("is-hidden");
+  }
+
+  function fitGraphView() {
+    const host = $("#graph-host");
+    if (!host || !_graphSize.w || !_graphSize.h) return;
+    const z = Math.min(
+      (host.clientWidth - 28) / _graphSize.w,
+      (host.clientHeight - 28) / _graphSize.h,
+      1);
+    setGraphZoom(Math.max(0.25, z));
+    setTimeout(() => {
+      host.scrollLeft = Math.max(0, (host.scrollWidth - host.clientWidth) / 2);
+      host.scrollTop = Math.max(0, (host.scrollHeight - host.clientHeight) / 2);
+    }, 20);
+  }
+
+  function centerRelationshipGraph() {
+    const host = $("#graph-host");
+    if (!host) return;
+    _graphZoom = 1;
+    applyGraphZoom();
+    host.scrollLeft = Math.max(0, (host.scrollWidth - host.clientWidth) / 2);
+    host.scrollTop = 0;
+  }
+  function toggleGraphFullscreen() {
+    const card = document.querySelector(".graph-card");
+    const btn = $("#graph-fullscreen");
+    if (!card) return;
+    const on = card.classList.toggle("graph-fullscreen");
+    document.body.classList.toggle("graph-fullscreen-open", on);
+    if (btn) btn.textContent = on ? "全画面を戻す" : "全画面";
+    if (on && _graphZoom < 1) {
+      _graphZoom = 1;
+      applyGraphZoom();
+    }
+    setTimeout(() => {
+      const host = $("#graph-host");
+      if (host) {
+        host.scrollLeft = Math.max(0, (host.scrollWidth - host.clientWidth) / 2);
+        host.scrollTop = 0;
+      }
+    }, 30);
+  }
+  function graphSvgXml() {
+    const clone = _graphSvg.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(_graphSize.w));
+    clone.setAttribute("height", String(_graphSize.h));
+    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    style.textContent = `
+      .rg-box{fill:#fff;stroke:#b9c3d2;stroke-width:1.2}
+      .rg-node-proc .rg-box{fill:#eef5ff;stroke:#8db4e2}
+      .rg-node-file .rg-box{fill:#fff8d8;stroke:#d6b656}
+      .rg-node-net .rg-box{fill:#f2eafb;stroke:#9b72c7}
+      .rg-node-identity .rg-box{fill:#e8f5ee;stroke:#2e7d6b}
+      .rg-node-object .rg-box{fill:#f3f0e6;stroke:#a18b5b}
+      .rg-node-hit .rg-box{stroke:#c0392b;stroke-width:2}
+      .rg-node-synth .rg-box{stroke-dasharray:5 4}
+      .rg-label{font:600 12px sans-serif;fill:#1f2937}
+      .rg-sub{font:10px sans-serif;fill:#5b6778}
+      .rg-synth-tag{font:9px sans-serif;fill:#8a6d00}
+      .rg-hit-tag{font:9px sans-serif;fill:#b03a2e}
+      .rg-edge-label{font:10px sans-serif;fill:#5b6778;paint-order:stroke;stroke:#fff;stroke-width:3px}
+    `;
+    clone.insertBefore(style, clone.firstChild);
+    return new XMLSerializer().serializeToString(clone);
+  }
+
+  function saveRelationshipGraph(format = "svg") {
+    if (!_graphSvg) return;
+    const xml = graphSvgXml();
+    if (format === "svg") {
+      const blob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "relationship-graph.svg";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      return;
+    }
+    const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(2, 6000 / Math.max(1, _graphSize.w),
+                             6000 / Math.max(1, _graphSize.h));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(_graphSize.w * scale));
+      canvas.height = Math.max(1, Math.round(_graphSize.h * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        if (!blob) return;
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "relationship-graph.png";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      }, "image/png");
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
   }
 
   // -------- 公開モード: 大会の全体統計ダッシュボード --------
@@ -3180,6 +4472,23 @@ console.log("[app] app.js v2026-05-21-c executing");
           runHunt?.();
         }, 60);
       };
+      const gbtn = $("#host-pivot-graph");
+      if (gbtn) gbtn.onclick = () => {
+        switchTab("graph");
+        setTimeout(async () => {
+          const sel = $("#graph-computer");
+          if (!sel) return;
+          if (![...sel.options].some(o => o.value === host)) {
+            const o = document.createElement("option");
+            o.value = host;
+            o.textContent = host;
+            sel.appendChild(o);
+          }
+          sel.value = host;
+          await populateGraphJobs(host);
+          loadRelationshipGraph();
+        }, 80);
+      };
     } catch (e) {
       $("#host-detail-summary").innerHTML = `<div class="muted small">通信エラー: ${escapeHtml(String(e))}</div>`;
     }
@@ -3250,15 +4559,6 @@ console.log("[app] app.js v2026-05-21-c executing");
         "IoC: " + total.toLocaleString() + " 件 / " + ok + " フィード";
     } catch { /* ignore */ }
 
-    try {
-      const s = await (await fetch("/api/system/info")).json();
-      const isAdmin = !!s.admin;
-      document.querySelector("#sb-admin").textContent =
-        "権限: " + (isAdmin ? "管理者" : "通常ユーザ");
-      // Re-style the admin badge subtly: warn colour when not elevated.
-      const el = document.querySelector("#sb-admin");
-      el.style.color = isAdmin ? "var(--ok)" : "var(--warn)";
-    } catch { /* ignore */ }
   }
 
   // -------- 用語ツールチップ (専門用語に hover 解説) --------
@@ -3280,7 +4580,7 @@ console.log("[app] app.js v2026-05-21-c executing");
     const used = new Set();
     // 走査対象から除外するタグ
     const SKIP = new Set(["CODE","A","BUTTON","INPUT","SELECT","OPTION",
-                          "TEXTAREA","SCRIPT","STYLE","PRE"]);
+                          "TEXTAREA","SCRIPT","STYLE","PRE","LABEL","SUMMARY"]);
     // 用語を長い順に (ATT&CK が AT より先に当たるように)
     const terms = Object.keys(GLOSSARY).sort((a,b)=>b.length-a.length);
 
@@ -3291,7 +4591,13 @@ console.log("[app] app.js v2026-05-21-c executing");
         while (p && p !== root) {
           if (p.nodeType === 1) {
             if (SKIP.has(p.tagName)) return NodeFilter.FILTER_REJECT;
-            if (p.classList && p.classList.contains("term")) return NodeFilter.FILTER_REJECT;
+            if (p.hasAttribute && p.hasAttribute("data-no-glossary")) return NodeFilter.FILTER_REJECT;
+            if (p.classList && (p.classList.contains("term") ||
+                p.classList.contains("home-kicker") ||
+                p.classList.contains("page-head") ||
+                p.classList.contains("brand") ||
+                p.classList.contains("tab") ||
+                p.classList.contains("snav"))) return NodeFilter.FILTER_REJECT;
           }
           p = p.parentNode;
         }
@@ -3331,7 +4637,7 @@ console.log("[app] app.js v2026-05-21-c executing");
   }
 
   // boot
-  health(); refreshWorkspace(); refreshJobs(); updateScanButton(); loadSystemInfo();
+  health(); refreshWorkspace(); refreshJobs(); updateScanButton();
   refreshStatusBar();
   installGlossary();
   setInterval(refreshWorkspace, 5000);

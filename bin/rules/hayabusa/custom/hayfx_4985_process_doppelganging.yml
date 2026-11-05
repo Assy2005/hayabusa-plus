@@ -1,0 +1,22 @@
+title: Process Doppelganging Transaction State Change (Security 4985)
+id: hayfx-4985-process-doppelganging
+status: experimental
+description: Detects Security 4985 transaction state changes associated with process doppelganging.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1055/004/
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    Channel: 'Security'
+    EventID: 4985
+  condition: selection
+falsepositives:
+  - Transactional NTFS applications and installers.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1055.004

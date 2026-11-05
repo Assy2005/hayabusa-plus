@@ -1,0 +1,70 @@
+title: Suspicious RMM Deployment Or Execution
+id: hayfx-rmm-suspicious-deployment
+status: experimental
+description: |
+  Detects common remote-monitoring-and-management (RMM) agents when they
+  are launched by a browser, Office, script host, or shell, or installed
+  silently with attacker-style parameters. This covers 2026 help-desk
+  social engineering that abuses AnyDesk, ScreenConnect, Splashtop,
+  Atera, TeamViewer, RustDesk, and MSP360 for initial access.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://www.sans.org/blog/stay-ahead-ransomware-initial-access-via-evolving-social-engineering
+  - https://www.microsoft.com/en-us/security/blog/2026/09/29/phishing-abuses-rmm-tools-persistent-access/
+  - https://redcanary.com/blog/security-operations/rmm-detection/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection_image:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith:
+      - '\AnyDesk.exe'
+      - '\ScreenConnect.ClientService.exe'
+      - '\ScreenConnect.Client.exe'
+      - '\TeamViewer.exe'
+      - '\TeamViewer_Service.exe'
+      - '\AteraAgent.exe'
+      - '\SplashtopStreamer.exe'
+      - '\SRService.exe'
+      - '\RustDesk.exe'
+      - '\RMM.Agent.exe'
+  selection_parent:
+    ParentImage|endswith:
+      - '\WINWORD.EXE'
+      - '\EXCEL.EXE'
+      - '\POWERPNT.EXE'
+      - '\OUTLOOK.EXE'
+      - '\chrome.exe'
+      - '\msedge.exe'
+      - '\firefox.exe'
+      - '\mshta.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\powershell.exe'
+      - '\cmd.exe'
+  selection_silent:
+    CommandLine|contains:
+      - '--install'
+      - '--silent'
+      - '--password'
+      - '--token'
+      - ' /S '
+      - '/silent'
+      - 'RMM.Agent'
+  filter_managed_deployment:
+    ParentImage|endswith:
+      - '\CCMExec.exe'
+      - '\MicrosoftIntuneManagementExtension.exe'
+      - '\AgentService.exe'
+  condition: selection_image and (selection_parent or selection_silent) and not filter_managed_deployment
+falsepositives:
+  - Authorised IT staff installing an RMM tool from a browser or running a silent deployment.
+  - MSP-managed endpoints where the RMM agent is intentionally deployed interactively.
+level: high
+tags:
+  - attack.command_and_control
+  - attack.persistence
+  - attack.t1219

@@ -1,0 +1,24 @@
+title: WinRM Remote Management Activity
+id: hayfx-winrm-remote-management
+status: experimental
+description: Detects WinRM remote shell and management events beyond shell creation, including event 169.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1021/006/
+logsource:
+  product: windows
+  service: winrm
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-WinRM/Operational'
+    EventID:
+      - 91
+      - 169
+  condition: selection
+falsepositives:
+  - Legitimate PowerShell remoting and administration.
+level: medium
+tags:
+  - attack.lateral_movement
+  - attack.t1021.006

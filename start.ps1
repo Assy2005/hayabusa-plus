@@ -1,6 +1,9 @@
 param(
-    # -Public で 0.0.0.0 にバインドし、LAN 公開 (危険度ランキング) モードで起動する。
-    [switch]$Public
+    # Windows is a compatibility target. Prefer ./start.sh on WSL2/Linux.
+    # -Public binds 0.0.0.0 (unauthenticated ranking/LAN mode).
+    [switch]$Public,
+    # Optional evidence/data root. Defaults to .\workspace.
+    [string]$DataRoot = ""
 )
 
 # Hayabusa GUI launcher.
@@ -24,8 +27,25 @@ if (-not $py) { throw "Python 3.x required on PATH." }
 
 $env:HAYABUSA_GUI_PORT = if ($env:HAYABUSA_GUI_PORT) { $env:HAYABUSA_GUI_PORT } else { '8787' }
 
+if ($DataRoot) {
+    $env:HAYABUSA_DATA_ROOT = (Resolve-Path -LiteralPath $DataRoot -ErrorAction SilentlyContinue).Path
+    if (-not $env:HAYABUSA_DATA_ROOT) { $env:HAYABUSA_DATA_ROOT = $DataRoot }
+} elseif (-not $env:HAYABUSA_DATA_ROOT) {
+    $env:HAYABUSA_DATA_ROOT = Join-Path $here 'workspace'
+}
+$env:HAYABUSA_WORKSPACE = $env:HAYABUSA_DATA_ROOT
+New-Item -ItemType Directory -Path $env:HAYABUSA_DATA_ROOT -Force | Out-Null
+
 if ($Public) {
+    if ($env:HAYABUSA_ALLOW_UNAUTHENTICATED -ne '1') {
+        Write-Host "==> Refusing to bind 0.0.0.0 without an explicit opt-in." -ForegroundColor Red
+        Write-Host "    This console has no authentication and exposes evidence." -ForegroundColor Yellow
+        Write-Host "    For an isolated lab only:" -ForegroundColor Yellow
+        Write-Host "      `$env:HAYABUSA_ALLOW_UNAUTHENTICATED='1'; .\start.ps1 -Public" -ForegroundColor Yellow
+        exit 3
+    }
     $env:HAYABUSA_GUI_HOST = '0.0.0.0'
+    $env:HAYABUSA_ALLOW_UNAUTHENTICATED = '1'
     # ASCII only: Windows PowerShell 5.1 misreads non-ASCII in .ps1 (cp932) and
     # can break the line. The Python server prints a JP banner correctly anyway.
     Write-Host "==> PUBLIC (LAN) mode: binding 0.0.0.0. Use only on a trusted LAN." -ForegroundColor Yellow
@@ -63,8 +83,9 @@ if ($holderPid) {
     }
 }
 
-$workspace = Join-Path $here 'workspace'
+$workspace = $env:HAYABUSA_DATA_ROOT
 New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $workspace 'audit') -Force | Out-Null
 $portFile = Join-Path $workspace '.port'
 Remove-Item $portFile -ErrorAction SilentlyContinue
 

@@ -1,0 +1,24 @@
+title: Local User Or Group Enumeration
+id: hayfx-security-4798-4799-enum
+status: experimental
+description: Detects Windows Security enumeration of local users or groups, often used during discovery.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1087/001/
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    Channel: 'Security'
+    EventID:
+      - 4798
+      - 4799
+  condition: selection
+falsepositives:
+  - Inventory and identity-management tools.
+level: low
+tags:
+  - attack.discovery
+  - attack.t1087.001

@@ -1,0 +1,63 @@
+title: Explorer Or Terminal Spawns Network-Capable Interpreter
+id: hayfx-clickfix-explorer-child
+status: experimental
+description: |
+  Detects a user-initiated interpreter or LOLBin launched from Explorer or
+  Windows Terminal with a remote URL, hidden-window flag, encoded command,
+  or download cradle. This is the execution chokepoint for ClickFix and
+  fake-CAPTCHA paste-and-run campaigns, including variants that avoid the
+  RunMRU registry key.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://iimp0ster.github.io/detection-chokepoints/chokepoints/clickfix-techniques/
+  - https://blueteam.cool/posts/clickfix-2026-stage0/
+  - https://attack.mitre.org/techniques/T1204/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection_parent:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    ParentImage|endswith:
+      - '\explorer.exe'
+      - '\WindowsTerminal.exe'
+      - '\wt.exe'
+  selection_child:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+      - '\cmd.exe'
+      - '\mshta.exe'
+      - '\curl.exe'
+      - '\certutil.exe'
+      - '\forfiles.exe'
+      - '\conhost.exe'
+      - '\rundll32.exe'
+      - '\msiexec.exe'
+  selection_behavior:
+    CommandLine|contains:
+      - 'http://'
+      - 'https://'
+      - ' -enc '
+      - '-encodedcommand'
+      - 'FromBase64String'
+      - 'Invoke-WebRequest'
+      - 'Invoke-RestMethod'
+      - 'DownloadString'
+      - ' --headless'
+      - 'mshta http'
+      - 'mshta https'
+      - ' -w hidden'
+      - ' -windowstyle hidden'
+  condition: selection_parent and selection_child and selection_behavior
+falsepositives:
+  - Administrators launching a documented remote-management or download command from Explorer.
+  - Developer tooling that passes a URL to a shell from Windows Terminal.
+level: high
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.t1204.004
+  - attack.t1105

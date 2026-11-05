@@ -1,0 +1,35 @@
+title: BITS Job Used To Download Executable From External Host
+id: hayfx-bits-external-download
+status: experimental
+description: Detects BITS jobs created by desktopimgdownldr or downloading executables/archives from non-Microsoft external hosts.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://lolbas-project.github.io/lolbas/Binaries/Desktopimgdownldr/
+  - https://attack.mitre.org/techniques/T1197/
+logsource:
+  product: windows
+  service: bits-client
+detection:
+  selection_proc:
+    Channel: 'Microsoft-Windows-Bits-Client/Operational'
+    EventID: 3
+    processPath|endswith: '\desktopimgdownldr.exe'
+  selection_url:
+    Channel: 'Microsoft-Windows-Bits-Client/Operational'
+    EventID:
+      - 59
+      - 60
+    url|contains:
+      - 'uguu.se'
+      - 'openvpn'
+      - '.7z'
+      - '.exe'
+  condition: selection_proc or selection_url
+falsepositives:
+  - Legitimate software update and download jobs.
+level: medium
+tags:
+  - attack.persistence
+  - attack.defense_evasion
+  - attack.t1197

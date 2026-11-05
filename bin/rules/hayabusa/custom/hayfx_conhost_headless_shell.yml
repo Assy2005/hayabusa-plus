@@ -1,0 +1,29 @@
+title: Conhost Headless Shell Launch
+id: hayfx-conhost-headless-shell
+status: experimental
+description: |
+  Detects conhost.exe running with --headless. This is rare outside WSL and
+  developer tooling and has been used in recent ClickFix chains to hide the
+  console window while a shell downloads or executes the next stage.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://www.trackr.live/2026/05/13/clickfix-detection-without-the-fairy-tale/
+  - https://attack.mitre.org/techniques/T1564/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\conhost.exe'
+    CommandLine|contains: '--headless'
+  condition: selection
+falsepositives:
+  - WSL / Windows Terminal / developer tooling that intentionally uses headless conhost.
+level: medium
+tags:
+  - attack.defense_evasion
+  - attack.t1564
+  - attack.t1059

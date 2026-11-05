@@ -1,0 +1,29 @@
+title: Renamed Regsvr32 Or Remote Scriptlet Execution
+id: hayfx-lolbin-regsvr32-scrobj
+status: experimental
+description: Detects regsvr32 or renamed regsvr32 loading a remote scriptlet or DLL over HTTP.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://lolbas-project.github.io/lolbas/Binaries/Regsvr32/
+  - https://attack.mitre.org/techniques/T1218/010/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    CommandLine|contains:
+      - 'scrobj.dll'
+      - '/i:http://'
+      - '/i:https://'
+      - 'http://pastebin.com'
+      - 'http://raw.githubusercontent.com'
+  condition: selection
+falsepositives:
+  - Legitimate COM scriptlet installation.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1218.010

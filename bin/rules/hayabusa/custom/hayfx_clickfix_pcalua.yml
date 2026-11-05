@@ -1,0 +1,42 @@
+title: ClickFix-style pcalua Proxy Execution
+id: hayfx-clickfix-pcalua
+status: experimental
+description: |
+  Detects pcalua.exe (Program Compatibility Assistant) being used as a
+  signed proxy launcher for a remote script host or shell. This 2026
+  ClickFix variant breaks the usual explorer.exe -> powershell lineage and
+  often adds caret-obfuscated mshta/URL arguments.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://www.reliancecyber.com/blog/clickfix-technique-evolution/
+  - https://blueteam.cool/posts/clickfix-2026-stage0/
+  - https://attack.mitre.org/techniques/T1218/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\pcalua.exe'
+    CommandLine|contains:
+      - 'mshta'
+      - 'powershell'
+      - 'pwsh'
+      - 'cmd'
+      - 'curl'
+      - 'wscript'
+      - 'cscript'
+      - 'http://'
+      - 'https://'
+  condition: selection
+falsepositives:
+  - Legacy application-compatibility shims that intentionally launch a browser or shell.
+  - Authorised red-team or software-packaging activity.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.execution
+  - attack.t1218
+  - attack.t1059.001

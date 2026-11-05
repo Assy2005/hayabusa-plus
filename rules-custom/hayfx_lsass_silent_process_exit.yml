@@ -1,0 +1,23 @@
+title: LSASS Cross-Process Termination Monitor
+id: hayfx-lsass-silent-process-exit
+status: experimental
+description: Detects the process-exit monitor reporting a cross-process termination involving lsass.exe.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1003/001/
+logsource:
+  product: windows
+  service: application
+detection:
+  selection:
+    Channel: 'Application'
+    EventID: 3001
+    param1|endswith: '\lsass.exe'
+  condition: selection
+falsepositives:
+  - Endpoint protection and diagnostic tools.
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1003.001

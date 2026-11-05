@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Events>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:01.0000000Z"/><EventRecordID>2001</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Windows\explorer.exe</Data>
+    <Data Name="ParentImage">C:\Windows\System32\userinit.exe</Data>
+    <Data Name="CommandLine">C:\Windows\explorer.exe</Data>
+    <Data Name="User">HAYFX-LAB\analyst</Data>
+    <Data Name="IntegrityLevel">Medium</Data>
+    <Data Name="ProcessId">6001</Data>
+    <Data Name="ProcessGuid">{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:02.0000000Z"/><EventRecordID>2002</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Windows\System32\notepad.exe</Data>
+    <Data Name="ParentImage">C:\Windows\explorer.exe</Data>
+    <Data Name="CommandLine">notepad.exe C:\Temp\notes.txt</Data>
+    <Data Name="User">HAYFX-LAB\analyst</Data>
+    <Data Name="IntegrityLevel">Medium</Data>
+    <Data Name="ProcessId">6002</Data>
+    <Data Name="ProcessGuid">{CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC}</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:03.0000000Z"/><EventRecordID>2003</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Windows\System32\svchost.exe</Data>
+    <Data Name="ParentImage">C:\Windows\System32\services.exe</Data>
+    <Data Name="CommandLine">C:\Windows\System32\svchost.exe -k netsvcs -p</Data>
+    <Data Name="User">NT AUTHORITY\SYSTEM</Data>
+    <Data Name="IntegrityLevel">System</Data>
+    <Data Name="ProcessId">6003</Data>
+    <Data Name="ProcessGuid">{DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD}</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>6</EventID><Version>5</Version><Level>4</Level><Task>6</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:04.0000000Z"/><EventRecordID>2004</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="ImageLoaded">C:\Windows\System32\drivers\ntfs.sys</Data>
+    <Data Name="Hashes">SHA256=1111111111111111111111111111111111111111111111111111111111111111</Data>
+    <Data Name="Signed">true</Data>
+    <Data Name="Signature">Microsoft Windows</Data>
+    <Data Name="SignatureStatus">Valid</Data>
+    <Data Name="Company">Microsoft Corporation</Data>
+    <Data Name="Description">NT File System Driver</Data>
+    <Data Name="Product">Microsoft Windows</Data>
+    <Data Name="FileVersion">10.0</Data>
+    <Data Name="OriginalFileName">ntfs.sys</Data>
+    <Data Name="ProcessGuid">{EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEEEEEE}</Data>
+    <Data Name="ProcessId">6004</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>13</EventID><Version>5</Version><Level>4</Level><Task>13</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:05.0000000Z"/><EventRecordID>2005</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="EventType">SetValue</Data>
+    <Data Name="Image">C:\Windows\explorer.exe</Data>
+    <Data Name="TargetObject">HKCU\S-1-5-21-1111111111-2222222222-3333333333-1001\Software\Microsoft\Windows\CurrentVersion\Run\OneDrive</Data>
+    <Data Name="Details">C:\Users\analyst\AppData\Local\Microsoft\OneDrive\OneDrive.exe</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:06.0000000Z"/><EventRecordID>2006</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Program Files\rclone\rclone.exe</Data>
+    <Data Name="ParentImage">C:\Windows\System32\cmd.exe</Data>
+    <Data Name="CommandLine">rclone.exe copy C:\Data D:\Backup</Data>
+    <Data Name="User">HAYFX-LAB\analyst</Data>
+    <Data Name="IntegrityLevel">Medium</Data>
+    <Data Name="ProcessId">6005</Data>
+    <Data Name="ProcessGuid">{FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF}</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:07.0000000Z"/><EventRecordID>2007</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Windows\System32\esentutl.exe</Data>
+    <Data Name="ParentImage">C:\Windows\System32\cmd.exe</Data>
+    <Data Name="CommandLine">esentutl.exe /y C:\Temp\mailbox.edb /d C:\Temp\mailbox-copy.edb /o</Data>
+    <Data Name="User">HAYFX-LAB\analyst</Data>
+    <Data Name="IntegrityLevel">Medium</Data>
+    <Data Name="ProcessId">6006</Data>
+    <Data Name="ProcessGuid">{AAAAAAAA-0000-0000-0000-000000000001}</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:08.0000000Z"/><EventRecordID>2008</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Program Files\AnyDesk\AnyDesk.exe</Data>
+    <Data Name="ParentImage">C:\Windows\System32\services.exe</Data>
+    <Data Name="CommandLine">C:\Program Files\AnyDesk\AnyDesk.exe --service</Data>
+    <Data Name="User">NT AUTHORITY\SYSTEM</Data>
+    <Data Name="IntegrityLevel">System</Data>
+    <Data Name="ProcessId">6007</Data>
+    <Data Name="ProcessGuid">{AAAAAAAA-0000-0000-0000-000000000002}</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:09.0000000Z"/><EventRecordID>2009</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Windows\System32\pcalua.exe</Data>
+    <Data Name="ParentImage">C:\Windows\explorer.exe</Data>
+    <Data Name="CommandLine">pcalua.exe -a C:\Windows\System32\calc.exe</Data>
+    <Data Name="User">HAYFX-LAB\analyst</Data>
+    <Data Name="IntegrityLevel">Medium</Data>
+    <Data Name="ProcessId">6008</Data>
+    <Data Name="ProcessGuid">{AAAAAAAA-0000-0000-0000-000000000003}</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:10.0000000Z"/><EventRecordID>2010</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Windows\System32\auditpol.exe</Data>
+    <Data Name="ParentImage">C:\Windows\System32\cmd.exe</Data>
+    <Data Name="CommandLine">auditpol.exe /get /category:*</Data>
+    <Data Name="User">HAYFX-LAB\analyst</Data>
+    <Data Name="IntegrityLevel">High</Data>
+    <Data Name="ProcessId">6009</Data>
+    <Data Name="ProcessGuid">{AAAAAAAA-0000-0000-0000-000000000004}</Data>
+</EventData>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+<System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-11-05T12:10:11.0000000Z"/><EventRecordID>2011</EventRecordID><Correlation/>
+    <Execution ProcessID="4343" ThreadID="4343"/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HAYFX-LAB</Computer>
+    <Security UserID="S-1-5-21-1111111111-2222222222-3333333333-1001"/>
+</System>
+<EventData>
+    <Data Name="Image">C:\Windows\System32\conhost.exe</Data>
+    <Data Name="ParentImage">C:\Windows\System32\cmd.exe</Data>
+    <Data Name="CommandLine">conhost.exe 0xffffffff -ForceV1</Data>
+    <Data Name="User">HAYFX-LAB\analyst</Data>
+    <Data Name="IntegrityLevel">Medium</Data>
+    <Data Name="ProcessId">6010</Data>
+    <Data Name="ProcessGuid">{AAAAAAAA-0000-0000-0000-000000000005}</Data>
+</EventData>
+</Event>
+</Events>

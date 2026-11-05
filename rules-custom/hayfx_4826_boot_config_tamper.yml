@@ -1,0 +1,28 @@
+title: Secure Boot Configuration Changed To Enable Test Signing Or Kernel Debug
+id: hayfx-4826-boot-config-tamper
+status: experimental
+description: Detects Security 4826 when kernel debugging, test signing or integrity-check weakening is enabled.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1553/006/
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    Channel: 'Security'
+    EventID: 4826
+  suspicious:
+    KernelDebug|contains: '%%1842'
+  suspicious_test:
+    TestSigning|contains: '%%1842'
+  suspicious_integrity:
+    DisableIntegrityChecks|contains: '%%1842'
+  condition: selection and (suspicious or suspicious_test or suspicious_integrity)
+falsepositives:
+  - Development and driver-testing systems.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1553.006

@@ -1,0 +1,45 @@
+title: Windows Defender Exclusion Or Tamper Registry Change
+id: hayfx-defender-exclusion-tamper
+status: experimental
+description: |
+  Detects registry writes that add Defender exclusions or change the
+  high-value protection switches used to disable real-time scanning or
+  tamper protection. Ransomware and infostealer operators commonly weaken
+  Defender before dropping tools or encrypting data.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://learn.microsoft.com/en-us/defender-endpoint/configure-exclusions-microsoft-defender-antivirus
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection_exclusion:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 13
+    TargetObject|contains:
+      - '\Microsoft\Windows Defender\Exclusions\Paths'
+      - '\Microsoft\Windows Defender\Exclusions\Extensions'
+      - '\Microsoft\Windows Defender\Exclusions\Processes'
+  selection_switch:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 13
+    TargetObject|contains:
+      - 'DisableAntiSpyware'
+      - 'DisableAntiVirus'
+      - 'DisableRealtimeMonitoring'
+      - 'TamperProtection'
+    Details|contains:
+      - '0x00000001'
+      - '0x00000000'
+      - 'DWORD (0x00000001)'
+      - 'DWORD (0x00000000)'
+  condition: selection_exclusion or selection_switch
+falsepositives:
+  - Authorised endpoint-management or security tooling that adds a documented exclusion.
+  - Administrative hardening or troubleshooting that temporarily changes a protection switch.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001

@@ -1,0 +1,35 @@
+title: Remote Admin Share File Copy Via SMB
+id: hayfx-5145-admin-share-copy
+status: experimental
+description: Detects executable or script-like files accessed through ADMIN$, C$ or other remote administrative shares.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1021/002/
+  - https://attack.mitre.org/techniques/T1570/
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    Channel: 'Security'
+    EventID: 5145
+    ShareName|contains:
+      - '\ADMIN$'
+      - '\C$'
+    RelativeTargetName|contains:
+      - '.exe'
+      - '.dll'
+      - '.bat'
+      - '.cmd'
+      - '.ps1'
+      - 'Windows\Temp'
+      - '\Temp\'
+      - 'Users\'
+  condition: selection
+falsepositives:
+  - Software deployment and administrative file copies.
+level: medium
+tags:
+  - attack.lateral_movement
+  - attack.t1021.002

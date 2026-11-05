@@ -1,0 +1,28 @@
+title: Suspicious Child Process Of Wuauclt
+id: hayfx-wuauclt-child-process
+status: experimental
+description: Detects command or scripting processes launched by wuauclt.exe, a known LOLBAS proxy execution technique.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://lolbas-project.github.io/lolbas/Binaries/Wuauclt/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    ParentImage|endswith: '\wuauclt.exe'
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+      - '\rundll32.exe'
+      - '\regsvr32.exe'
+  condition: selection
+falsepositives:
+  - Legacy Windows Update components.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1218

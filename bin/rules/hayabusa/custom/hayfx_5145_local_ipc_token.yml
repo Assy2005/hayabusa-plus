@@ -1,0 +1,27 @@
+title: Local SMB IPC$ Token Access
+id: hayfx-5145-local-ipc-token
+status: experimental
+description: Detects local SMB access to an IPC$ pipe by a machine account, often used to retrieve a service token.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1134/001/
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    Channel: 'Security'
+    EventID: 5145
+    ShareName|endswith: '\IPC$'
+    IpAddress:
+      - '::1'
+      - '127.0.0.1'
+    SubjectUserName|endswith: '$'
+  condition: selection
+falsepositives:
+  - Local service authentication and SMB loopback tests.
+level: medium
+tags:
+  - attack.privilege_escalation
+  - attack.t1134.001

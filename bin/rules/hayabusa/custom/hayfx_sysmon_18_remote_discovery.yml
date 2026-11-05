@@ -1,0 +1,38 @@
+title: Remote System Discovery Via Named Pipes
+id: hayfx-sysmon-18-remote-discovery
+status: experimental
+description: Detects named-pipe access to SMB, service control, registry, SAM, LSA, spooler and task scheduler endpoints commonly used for remote discovery.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1021/002/
+  - https://attack.mitre.org/techniques/T1087/002/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 18
+    PipeName|endswith:
+      - '\srvsvc'
+      - '\wkssvc'
+      - '\lsarpc'
+      - '\samr'
+      - '\netlogon'
+      - '\atsvc'
+      - '\epmapper'
+      - '\spoolss'
+      - '\browser'
+      - '\winreg'
+      - '\ntsvcs'
+      - '\scerpc'
+  condition: selection
+falsepositives:
+  - Inventory, backup and remote administration software.
+level: medium
+tags:
+  - attack.discovery
+  - attack.lateral_movement
+  - attack.t1021.002
+  - attack.t1087.002

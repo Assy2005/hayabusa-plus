@@ -11,15 +11,21 @@
 (function (global) {
   "use strict";
 
-  // Level → color, kept in sync with style.css.
+  // Level → colour, kept in sync with the paper palette in theme.css.
+  // Muted vermilion/ochre/olive: readable on #fcfaf6 without shouting.
   const LEVEL_COLOR = {
-    critical: "#ff1744",
-    high: "#ff5252",
-    medium: "#ffb300",
-    low: "#42a5f5",
-    informational: "#5a6378",
-    unknown: "#7e8aa1",
+    critical: "#9f1d1d",
+    high: "#a8480a",
+    medium: "#a67c00",
+    low: "#4d7c2a",
+    informational: "#93897c",
+    unknown: "#c6bcab",
   };
+  const INK = "#1a1613";
+  const MUTED = "#6b6257";
+  const FAINT = "#93897c";
+  const RULE = "#ddd6c9";
+  const PAPER = "#fcfaf6";
   const LEVEL_ORDER = ["critical", "high", "medium", "low", "informational", "unknown"];
 
   function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
@@ -43,7 +49,7 @@
     if (!total) {
       svg("text", {
         x: cx, y: cy, "text-anchor": "middle", "dominant-baseline": "middle",
-        fill: "#7d869c", "font-size": "14"
+        fill: FAINT, "font-size": "14"
       }, root).textContent = "データなし";
       return;
     }
@@ -66,19 +72,19 @@
         "Z"
       ].join(" ");
       const path = svg("path", { d, fill: LEVEL_COLOR[lv] || "#888",
-        "stroke": "#0b0d12", "stroke-width": "1" }, root);
+        "stroke": PAPER, "stroke-width": "1.5" }, root);
       const title = svg("title", {}, path);
       title.textContent = `${lv}: ${v.toLocaleString()} 件 (${(v / total * 100).toFixed(1)}%)`;
       angle = a2;
     });
     svg("text", {
       x: cx, y: cy - 6, "text-anchor": "middle",
-      fill: "#d8def0", "font-size": "22", "font-weight": "700"
+      fill: INK, "font-size": "22", "font-weight": "600"
     }, root).textContent = total.toLocaleString();
     svg("text", {
       x: cx, y: cy + 14, "text-anchor": "middle",
-      fill: "#7d869c", "font-size": "10",
-      "letter-spacing": "0.5"
+      fill: FAINT, "font-size": "9",
+      "letter-spacing": "0.8"
     }, root).textContent = "DETECTIONS";
   }
 
@@ -94,7 +100,7 @@
     const pad = { l: 32, r: 12, t: 12, b: 28 };
     const root = svg("svg", { viewBox: `0 0 ${w} ${h}` }, container);
     if (!keys.length) {
-      svg("text", { x: w/2, y: h/2, "text-anchor": "middle", fill: "#7d869c",
+      svg("text", { x: w/2, y: h/2, "text-anchor": "middle", fill: FAINT,
         "font-size": "13" }, root).textContent = "時系列データがありません";
       return [];
     }
@@ -116,9 +122,9 @@
       const y = pad.t + innerH * (1 - i / 4);
       const val = Math.round(yMax * i / 4);
       svg("line", { x1: pad.l, x2: w - pad.r, y1: y, y2: y,
-        stroke: "#1f2533", "stroke-dasharray": i ? "2 4" : "0" }, root);
+        stroke: RULE, "stroke-dasharray": i ? "2 4" : "0" }, root);
       svg("text", { x: pad.l - 4, y: y + 3, "text-anchor": "end",
-        fill: "#7d869c", "font-size": "10" }, root).textContent = val;
+        fill: MUTED, "font-size": "9" }, root).textContent = val;
     }
 
     const levelsByPriority = LEVEL_ORDER.filter(l => present.has(l));
@@ -145,7 +151,7 @@
       if (i % labelEvery !== 0) return;
       const x = pad.l + xStep * i + xStep / 2;
       svg("text", { x, y: h - 8, "text-anchor": "middle",
-        fill: "#7d869c", "font-size": "10" }, root).textContent = shortLabel(k);
+        fill: MUTED, "font-size": "9" }, root).textContent = shortLabel(k);
     });
 
     return levelsByPriority;

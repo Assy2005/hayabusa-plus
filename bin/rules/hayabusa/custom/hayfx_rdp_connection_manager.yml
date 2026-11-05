@@ -1,0 +1,27 @@
+title: RDP Connection Manager Authentication Activity
+id: hayfx-rdp-connection-manager
+status: experimental
+description: Detects Terminal Services RemoteConnectionManager events associated with RDP tunneling, authentication and connection setup.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1021/001/
+logsource:
+  product: windows
+  service: rds-rcm
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational'
+    EventID:
+      - 1149
+      - 1155
+      - 258
+      - 1136
+      - 261
+  condition: selection
+falsepositives:
+  - Normal RDP clients and Remote Desktop Gateway usage.
+level: medium
+tags:
+  - attack.lateral_movement
+  - attack.t1021.001

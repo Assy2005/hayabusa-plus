@@ -1,0 +1,33 @@
+title: Office Application Spawns Script Or Shell
+id: hayfx-office-child-shell
+status: experimental
+description: Detects Microsoft Office processes spawning command shells, script hosts or mshta/rundll32.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1204/002/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    ParentImage|endswith:
+      - '\WINWORD.EXE'
+      - '\EXCEL.EXE'
+      - '\POWERPNT.EXE'
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+      - '\mshta.exe'
+      - '\rundll32.exe'
+      - '\cscript.exe'
+      - '\wscript.exe'
+  condition: selection
+falsepositives:
+  - Office macros intentionally launching approved tools.
+level: high
+tags:
+  - attack.execution
+  - attack.t1204.002

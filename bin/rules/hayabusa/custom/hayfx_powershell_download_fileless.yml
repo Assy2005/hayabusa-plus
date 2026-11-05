@@ -1,0 +1,47 @@
+title: PowerShell Download Or Fileless Execution Pattern
+id: hayfx-powershell-download-fileless
+status: experimental
+description: Detects script-block or classic PowerShell events containing download, web-client, encoded command or in-memory execution patterns.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+  - https://attack.mitre.org/techniques/T1027/
+logsource:
+  product: windows
+  service: powershell
+detection:
+  selection:
+    Channel:
+      - 'Microsoft-Windows-PowerShell/Operational'
+      - 'Windows PowerShell'
+    EventID:
+      - 4104
+      - 800
+    ScriptBlockText|contains:
+      - 'Net.ServicePointManager'
+      - 'DownloadString'
+      - 'DownloadFile'
+      - 'Invoke-WebRequest'
+      - 'IEX '
+      - 'FromBase64String'
+      - 'new-object net.webclient'
+      - 'New-Item'
+  selection_classic:
+    Channel: 'Windows PowerShell'
+    EventID: 800
+    'Data[1]|contains':
+      - 'Net.ServicePointManager'
+      - 'DownloadFile'
+      - 'DownloadString'
+      - 'Invoke-Item'
+      - 'New-Item'
+      - 'New-Object'
+  condition: selection or selection_classic
+falsepositives:
+  - Administrative scripts and software deployment.
+level: high
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.t1027

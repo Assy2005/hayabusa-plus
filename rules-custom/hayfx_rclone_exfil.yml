@@ -1,0 +1,42 @@
+title: Rclone Copy Or Sync To Remote Storage
+id: hayfx-rclone-exfil
+status: experimental
+description: |
+  Detects rclone copying or syncing data to a remote storage backend. Rclone
+  is frequently dropped by ransomware and data-theft actors to stage or
+  exfiltrate large collections without custom tooling.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1567/002/
+  - https://redcanary.com/threat-detection-report/techniques/exfiltration-over-web-service/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection_image:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\rclone.exe'
+  selection_action:
+    CommandLine|contains:
+      - 'copy'
+      - 'sync'
+      - 'move'
+  selection_remote:
+    CommandLine|contains:
+      - 's3:'
+      - 'sftp:'
+      - 'ftp:'
+      - 'webdav:'
+      - 'mega:'
+      - 'azureblob:'
+      - 'gcs:'
+      - 'b2:'
+  condition: selection_image and selection_action and selection_remote
+falsepositives:
+  - Authorised backup, migration, or data-transfer jobs that use rclone with a remote backend.
+level: medium
+tags:
+  - attack.exfiltration
+  - attack.t1567.002

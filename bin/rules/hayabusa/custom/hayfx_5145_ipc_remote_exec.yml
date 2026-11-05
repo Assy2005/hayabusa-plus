@@ -1,0 +1,33 @@
+title: Suspicious IPC$ Named Pipe Access From Remote Client
+id: hayfx-5145-ipc-remote-exec
+status: experimental
+description: Detects remote SMB access to high-value IPC$ management pipes used for service creation, registry, SAM, LSA and spooler abuse.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1021/002/
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    Channel: 'Security'
+    EventID: 5145
+    ShareName|endswith: '\IPC$'
+    RelativeTargetName|contains:
+      - 'svcctl'
+      - 'srvsvc'
+      - 'winreg'
+      - 'samr'
+      - 'lsarpc'
+      - 'spoolss'
+      - 'atsvc'
+      - 'netlogon'
+      - 'wkssvc'
+  condition: selection
+falsepositives:
+  - Legitimate remote administration and monitoring tools.
+level: high
+tags:
+  - attack.lateral_movement
+  - attack.t1021.002

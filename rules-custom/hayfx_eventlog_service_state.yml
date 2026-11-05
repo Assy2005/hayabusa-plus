@@ -1,0 +1,23 @@
+title: Windows Event Log Service State Change
+id: hayfx-eventlog-service-state
+status: experimental
+description: Detects service-control state changes for the Windows Event Log service, including crash recovery.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1562/002/
+logsource:
+  product: windows
+  service: system
+detection:
+  selection:
+    Channel: 'System'
+    EventID: 7036
+    param1: 'Windows Event Log'
+  condition: selection
+falsepositives:
+  - Normal service restarts.
+level: low
+tags:
+  - attack.defense_evasion
+  - attack.t1562.002

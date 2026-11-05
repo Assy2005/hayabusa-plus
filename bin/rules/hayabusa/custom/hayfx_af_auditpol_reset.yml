@@ -1,0 +1,42 @@
+title: Audit Policy Cleared Or Removed Via Auditpol
+id: af-auditpol-reset
+status: stable
+description: |
+  Detects auditpol.exe clearing or removing audit policy. This is a direct
+  anti-forensic action that removes the Windows audit configuration before
+  or after destructive activity. Legitimate use is rare outside imaging and
+  a documented audit-policy migration.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1562/002/
+  - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/auditpol
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  sel_sysmon:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\auditpol.exe'
+    CommandLine|contains:
+      - '/clear'
+      - '/remove'
+      - ' clear '
+      - ' remove '
+  sel_security:
+    Channel: 'Security'
+    EventID: 4688
+    NewProcessName|endswith: '\auditpol.exe'
+    CommandLine|contains:
+      - '/clear'
+      - '/remove'
+      - ' clear '
+      - ' remove '
+  condition: 1 of sel_*
+falsepositives:
+  - OS imaging, domain migration, or an approved audit-policy reset.
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1562.002

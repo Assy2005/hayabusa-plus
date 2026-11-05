@@ -1,0 +1,37 @@
+title: WMI Remote Command Execution Output To ADMIN Share
+id: hayfx-wmiexec-admin-share
+status: experimental
+description: |
+  Detects impacket-style WMIExec: WmiPrvSE.exe launches cmd.exe or
+  PowerShell with output redirected to a timestamped file under the local
+  ADMIN$ share. This is a high-confidence hands-on-keyboard lateral
+  movement pattern.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1047/
+  - https://attack.mitre.org/techniques/T1021/006/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    ParentImage|endswith: '\WmiPrvSE.exe'
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+      - '\pwsh.exe'
+    CommandLine|contains|all:
+      - 'ADMIN$'
+      - '2>&1'
+  condition: selection
+falsepositives:
+  - Enterprise management or backup software that uses WMI and redirects output to ADMIN$.
+level: high
+tags:
+  - attack.lateral_movement
+  - attack.execution
+  - attack.t1047
+  - attack.t1021.006

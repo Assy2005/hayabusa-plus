@@ -1,0 +1,26 @@
+title: Zip File Execution Via cmdkey Shell ZipFolder
+id: hayfx-lolbin-cmdkey-zip
+status: experimental
+description: Detects cmdkey being used to create stored credentials for a ZIP folder, a technique used to execute archived payloads.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://lolbas-project.github.io/lolbas/Binaries/Cmdkey/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\cmdkey.exe'
+    CommandLine|contains:
+      - 'Microsoft_Windows_Shell_ZipFolder'
+      - '/generic:Microsoft_Windows_Shell_ZipFolder'
+  condition: selection
+falsepositives:
+  - Rare user automation around ZIP folders.
+level: high
+tags:
+  - attack.execution
+  - attack.t1204.002

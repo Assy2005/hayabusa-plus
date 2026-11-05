@@ -1,0 +1,36 @@
+title: Kernel Driver Loaded From User-Writable Path
+id: hayfx-byovd-driver-user-path
+status: experimental
+description: |
+  Detects a kernel driver loaded from a user-writable directory. Attackers
+  use this pattern to load a vulnerable signed driver (BYOVD) for kernel
+  memory access, EDR tampering, or credential theft. Hash-based LOLDrivers
+  matching still applies; this rule covers new or repacked drivers whose
+  hash is not yet in the feed.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1068/
+  - https://www.loldrivers.io/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 6
+    ImageLoaded|contains:
+      - '\Users\'
+      - '\AppData\'
+      - '\Temp\'
+      - '\Downloads\'
+      - '\ProgramData\'
+  condition: selection
+falsepositives:
+  - Legitimate vendor software that installs a driver under ProgramData or AppData.
+  - Endpoint-protection or hardware-management agents using a user-writable staging directory.
+level: medium
+tags:
+  - attack.privilege_escalation
+  - attack.defense_evasion
+  - attack.t1068

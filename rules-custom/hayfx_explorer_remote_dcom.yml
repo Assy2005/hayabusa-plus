@@ -1,0 +1,24 @@
+title: Explorer Remote DCOM Connection
+id: hayfx-explorer-remote-dcom
+status: experimental
+description: Detects explorer.exe establishing inbound-looking network connections to high ports associated with DCOM activation.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1021/003/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 3
+    Image|endswith: '\explorer.exe'
+    Initiated: false
+  condition: selection
+falsepositives:
+  - Local RPC/COM traffic captured by Sysmon network events.
+level: low
+tags:
+  - attack.lateral_movement
+  - attack.t1021.003

@@ -5,24 +5,51 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hayabusa — DFIR コンソール</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/theme.css" />
 </head>
 <body>
   <header class="top">
     <div class="brand">
       <span class="logo">隼</span>
-      <span class="title">Hayabusa <span class="muted" id="ver">…</span></span>
+      <span class="brand-text">
+        <span class="title">hayabusa</span>
+        <span class="brand-sub">DFIR console</span>
+      </span>
+      <span class="muted small" id="ver">…</span>
     </div>
     <nav>
-      <button data-tab="home" class="tab active">🏠 ホーム</button>
-      <button data-tab="scan" class="tab">🔍 スキャン</button>
-      <button data-tab="dashboard" class="tab">📊 全体ビュー</button>
-      <button data-tab="results" class="tab local-only">📋 結果</button>
-      <button data-tab="hunt" class="tab local-only">🔎 さがす</button>
-      <button data-tab="ranking" class="tab">🏆 危険度ランキング</button>
-      <button data-tab="proctree" class="tab">🌳 プロセスツリー</button>
-      <button data-tab="hosts" class="tab local-only">💻 パソコン別</button>
-      <button data-tab="rules" class="tab">📖 検出ルール</button>
-      <button data-tab="about" class="tab">ℹ️ 情報</button>
+      <button data-tab="home" class="tab active"><span class="nv-i">01</span>ホーム</button>
+      <button data-tab="scan" class="tab"><span class="nv-i">02</span>スキャン</button>
+
+      <div class="nav-group local-only" data-group="results">
+        <button data-tab="results" class="tab group-lead"><span class="nv-i">03</span>結果</button>
+        <div class="subnav">
+          <button data-tab="results" class="snav">検知一覧</button>
+          <button data-tab="dashboard" class="snav">サマリ</button>
+          <button data-tab="hosts" class="snav">ホスト</button>
+          <button data-tab="cases" class="snav">ケース / 証跡</button>
+        </div>
+      </div>
+
+      <div class="nav-group local-only" data-group="investigate">
+        <button data-tab="hunt" class="tab group-lead"><span class="nv-i">04</span>調査</button>
+        <div class="subnav">
+          <button data-tab="hunt" class="snav">検知をさがす</button>
+          <button data-tab="logs" class="snav">生ログ</button>
+          <button data-tab="graph" class="snav">関係図</button>
+          <button data-tab="elastic" class="snav">Elastic</button>
+        </div>
+      </div>
+
+      <div class="nav-group local-only" data-group="settings">
+        <button data-tab="rules" class="tab group-lead"><span class="nv-i">05</span>設定</button>
+        <div class="subnav">
+          <button data-tab="rules" class="snav">検知ルール</button>
+          <button data-tab="about" class="snav">このツール</button>
+        </div>
+      </div>
+
+      <button data-tab="ranking" class="tab public-only"><span class="nv-i">06</span>ランキング</button>
     </nav>
     <div class="health" id="health" title="ヘルス状態">●</div>
   </header>
@@ -30,54 +57,45 @@
   <main>
     <!-- ホーム / ウェルカム -->
     <section id="tab-home" class="tab-panel active">
-      <div class="card scroll" style="align-items:center">
-        <div style="width:100%;max-width:1040px">
-          <div class="home-hero">
-            <div class="home-logo">🦅</div>
-            <h1>hayabusa-plus へようこそ</h1>
-            <p>パソコンに残った記録から、あやしい動きを見つけ出すツールです。<br/>
-               下の 3 ステップで始められます。</p>
+      <div class="home-shell">
+        <div class="home-hero">
+          <div class="home-kicker">HAYABUSA · DFIR CONSOLE</div>
+          <h1>隔離した解析環境で、<br />証跡を検証しながら調査する。</h1>
+          <p class="home-lede">EVTX は収集用の端末から解析ホストへ取り込み、SHA-256 を記録してから検査します。検知は日本語で解説され、ケース単位で証跡・判定・監査履歴を追跡できます。</p>
+          <div class="home-actions">
+            <button class="primary" data-goto-tab="scan">証跡を読み込む</button>
+            <button class="ghost-btn local-only" data-goto-tab="cases">ケース / 証跡を見る</button>
+            <button class="ghost-btn local-only" data-goto-tab="results">結果を見る</button>
+            <button class="ghost-btn public-only" data-goto-tab="ranking">ランキングを見る</button>
           </div>
+          <div id="home-posture" class="posture-strip" data-no-glossary>
+            <span class="posture-item"><b>実行環境</b><span id="post-runtime">—</span></span>
+            <span class="posture-item"><b>待受</b><span id="post-bind">—</span></span>
+            <span class="posture-item"><b>証跡</b><span id="post-evidence">SHA-256 記録</span></span>
+            <span class="posture-item"><b>認証</b><span id="post-auth">—</span></span>
+          </div>
+        </div>
 
-          <div class="home-steps">
-            <div class="home-step" data-goto="scan">
-              <div class="hs-num">1</div>
-              <div class="hs-icon">🔍</div>
-              <h3>ログを選ぶ</h3>
-              <p>パソコンの記録ファイルを選ぶか、<br/>
-                 「このパソコンを検査」を押すだけ。</p>
-            </div>
-            <div class="home-step" data-goto="scan">
-              <div class="hs-num">2</div>
-              <div class="hs-icon">▶️</div>
-              <h3>スキャンする</h3>
-              <p>ボタンを 1 つ押すと、<br/>
-                 あやしい動きを自動でさがします。</p>
-            </div>
-            <div class="home-step" data-goto="results">
-              <div class="hs-num">3</div>
-              <div class="hs-icon">📋</div>
-              <h3>結果を見る</h3>
-              <p>見つかった項目をクリックすると、<br/>
-                 意味と対応方法が日本語で出ます。</p>
-            </div>
-          </div>
+        <ol class="home-flow">
+          <li><span class="hf-n">01</span><b>証跡を取り込む</b><small>EVTX / ZIP ・ハッシュ記録</small></li>
+          <li><span class="hf-n">02</span><b>ケースで解析する</b><small>Sigma + IoC ・案件単位</small></li>
+          <li><span class="hf-n">03</span><b>証跡を確認する</b><small>ハッシュ / 監査 / レポート</small></li>
+        </ol>
 
-          <div class="home-foot">
-            <p>困ったら各画面の上にある青い説明バーを読んでください。<br/>
-               <a href="https://github.com/Assy2005/hayabusa-plus" target="_blank" rel="noopener">github.com/Assy2005/hayabusa-plus</a></p>
-          </div>
+        <div class="home-foot">
+          <span>解析対象の端末上では実行しないでください。ログは収集ツールで取得し、この解析ホストへ持ち込んでください。</span>
+          <a href="https://github.com/Assy2005/hayabusa-plus" target="_blank" rel="noopener">GitHub</a>
         </div>
       </div>
     </section>
 
     <!-- スキャン -->
     <section id="tab-scan" class="tab-panel">
-      <div class="tab-intro">
-        <span class="ti-icon">🔍</span>
-        <span class="ti-text"><strong>ここでは、ログを読み込んで「あやしい動き」をさがします。</strong>
-          左で対象を選び、右で設定して、下のボタンを押すだけ。
-          初めてなら「標準」設定のままで OK です。</span>
+      <div class="page-head">
+        <div>
+          <h1>スキャン</h1>
+          <p>解析ホストに取り込んだ証跡を検査します。解析対象の端末上では実行しないでください。</p>
+        </div>
       </div>
 
       <!-- 上段: 左 (対象) | 右 (設定) — 高さは自動で main の残りを埋める -->
@@ -87,13 +105,16 @@
             <span class="step-num">1</span>
             <h2>対象を選ぶ</h2>
           </div>
+          <div class="muted small safety-note">
+            解析対象端末では実行せず、収集済みの EVTX / ZIP を取り込んでください。
+          </div>
 
           <!-- 公開(ランキング)モード向け 参加チュートリアル -->
           <div class="pub-tutorial public-only">
-            <div class="pt-title">🏆 はじめての方へ — 3 ステップで参加</div>
+            <div class="pt-title">はじめての方へ — 3 ステップで参加</div>
             <ol class="pt-steps">
               <li>下のボタンで <b>ログ収集ツール</b> を入手
-                <div><a href="/api/collector" class="btn-like" download>📥 ログ収集ツール (.bat) をダウンロード</a></div>
+                <div><a href="/api/collector" class="btn-like" download>ログ収集ツール (.bat) をダウンロード</a></div>
               </li>
               <li>自分の Windows PC で右クリック →
                 <b>「管理者として実行」</b>。デスクトップに
@@ -104,29 +125,10 @@
             <div class="muted small">全員が同じツールで集めるので、調べるログ種別がそろい、危険度スコアを公平に比べられます。</div>
           </div>
 
-          <!-- このパソコンを直接スキャン (公開モードでは非表示) -->
-          <div id="this-pc-card" class="this-pc local-only">
-            <div class="this-pc-head">
-              <span class="this-pc-icon">🖥️</span>
-              <div class="this-pc-title">このパソコンを検査</div>
-              <span class="muted small" id="this-pc-summary">読込中…</span>
-            </div>
-            <div id="this-pc-status" class="this-pc-status muted small">
-              管理者権限の確認中…
-            </div>
-            <div class="this-pc-actions">
-              <button id="pc-scan-btn" class="primary" disabled>このパソコンをスキャン</button>
-              <button id="pc-import-btn" disabled>EVTX を取り込む</button>
-              <button id="pc-channels-btn" class="ghost-btn small" disabled>チャネル選択…</button>
-            </div>
-          </div>
-
-          <div class="muted small or-divider">— または EVTX ファイルから —</div>
-
           <div id="drop-zone" class="drop-zone">
             <div class="drop-icon">↓</div>
             <div class="drop-title">EVTX または ZIP をここにドロップ</div>
-            <div class="muted small">ZIP（収集ツールの出力）は自動で展開します ・ または</div>
+            <div class="muted small">ZIP（収集ツールの出力）は自動で展開します。</div>
             <label class="btn-like">
               ファイルを選択
               <input type="file" id="upload-input" accept=".evtx,.zip" hidden multiple />
@@ -134,11 +136,14 @@
             <div class="muted small" id="upload-status"></div>
           </div>
 
-          <div class="panel-head local-only">
-            <h3>ワークスペース</h3>
-            <button id="ws-refresh" class="ghost-btn small" title="再読込">↻</button>
-          </div>
-          <div id="workspace-listing" class="ws-list scroll-y local-only"></div>
+          <details class="advanced local-only ws-picker">
+            <summary>ワークスペースから選ぶ</summary>
+            <div class="panel-head">
+              <h3>保存済みのログ</h3>
+              <button id="ws-refresh" class="ghost-btn small" title="再読込" type="button">↻</button>
+            </div>
+            <div id="workspace-listing" class="ws-list scroll-y"></div>
+          </details>
 
           <details class="advanced local-only">
             <summary>対象タイプの手動切替 (詳細)</summary>
@@ -147,12 +152,7 @@
                 <select id="target-type">
                   <option value="file">単一の EVTX ファイル</option>
                   <option value="directory">ディレクトリ全体</option>
-                  <option value="live">ライブ解析 (C:\Windows\System32\winevt\Logs)</option>
                 </select>
-              </label>
-              <label class="row inline">
-                <input type="checkbox" id="allow-live" />
-                <span>ライブ解析を許可</span>
               </label>
             </div>
           </details>
@@ -166,7 +166,7 @@
 
           <!-- 公開モードでは設定を固定 (公平なスコアのため) -->
           <div class="pub-fixed public-only">
-            <div class="pf-title">⚙️ 設定は固定されています</div>
+            <div class="pf-title">設定は固定されています</div>
             <div class="muted small">公平に比べるため、全員 <b>標準設定（medium 以上・重複排除あり）</b>
               でスキャンします。下の「スキャン開始」を押すだけで OK です。</div>
           </div>
@@ -191,6 +191,17 @@
               title="詳細オプションを手動で組む">
               <b>カスタム</b><span class="muted small">手動指定</span>
             </button>
+          </div>
+          <div class="preset-note muted small">
+            迷ったら「標準」。軽量はまず全体像、徹底は時間をかけて見落としを確認する用途です。
+          </div>
+
+          <div class="cfg-row local-only case-row">
+            <label>案件名（任意）
+              <input id="case-name" maxlength="120" autocomplete="off"
+                     placeholder="例: IR-2026-042 横展開調査" />
+            </label>
+            <span class="muted small case-hint">同じ名前を再入力すると同じケースにまとまります。証跡ハッシュと監査履歴も案件単位で残ります。</span>
           </div>
 
           <div class="cfg-row local-only">
@@ -286,10 +297,11 @@
 
     <!-- ダッシュボード -->
     <section id="tab-dashboard" class="tab-panel">
-      <div class="tab-intro">
-        <span class="ti-icon">📊</span>
-        <span class="ti-text"><strong>調査したパソコン全体の「危険の様子」をまとめて表示します。</strong>
-          上から順に、いまの状況 → 最近の出来事 → よく出た手口 → 危険だったPC → 時間帯、で読めます。</span>
+      <div class="page-head">
+        <div>
+          <h1>サマリ</h1>
+          <p>調査したパソコン全体の危険の様子をまとめて表示します。</p>
+        </div>
       </div>
 
       <!-- ① いまの状況（ひとこと） -->
@@ -303,44 +315,38 @@
         <div class="sev-tile sev-low"><div class="st-n" id="st-low">0</div><div class="st-l">低<span>low</span></div></div>
       </div>
       <div class="dash-mini muted small">
-        検知の合計 <b id="kpi-total">0</b> 件 ・ 調査したPC <b id="kpi-hosts">0</b> 台 ・ 異なる手口 <b id="kpi-rules">0</b> 種
-        <span class="dash-mini-ctrl">
+        <span>検知の合計 <b id="kpi-total">0</b> 件 ・ 調査したPC <b id="kpi-hosts">0</b> 台 ・ 異なる手口 <b id="kpi-rules">0</b> 種</span>
+        <div class="dash-mini-ctrl">
           <label>PC <select id="dash-computer"><option value="">全部</option></select></label>
-          <label>対象 <select id="dash-job"><option value="">全部</option></select></label>
-          <label>時間 <select id="dash-bucket">
-            <option value="minute">分</option><option value="hour" selected>時</option><option value="day">日</option>
-          </select></label>
-          <label class="row inline"><input type="checkbox" id="dash-suppressed" /><span>抑制も含む</span></label>
           <button id="dash-refresh" class="ghost-btn small">↻ 更新</button>
-        </span>
+          <details class="mini-details">
+            <summary>絞り込み</summary>
+            <div class="mini-details-body">
+              <label>対象 <select id="dash-job"><option value="">全部</option></select></label>
+              <label>時間 <select id="dash-bucket">
+                <option value="minute">分</option><option value="hour" selected>時</option><option value="day">日</option>
+              </select></label>
+              <label class="row inline"><input type="checkbox" id="dash-suppressed" /><span>抑制も含む</span></label>
+            </div>
+          </details>
+        </div>
       </div>
 
       <!-- ③ 最近の重大な出来事 -->
       <div class="card">
-        <h2>🕒 最近の重大な出来事 <span class="muted small">いつ・どのPCで・何が（行をクリックで解説）</span></h2>
+        <h2>最近の重大な出来事 <span class="muted small">いつ・どのPCで・何が（行をクリックで解説）</span></h2>
         <div id="recent-events" class="recent-events"></div>
-      </div>
-
-      <!-- 運営者専用: 安全としてマークしたルール（スコア除外）の管理 -->
-      <div class="card is-admin-only">
-        <h2>🛡 安全リスト（運営者専用） <span class="muted small">スコア計算から外したルール</span></h2>
-        <div class="muted small">
-          「最近の重大な出来事」の行を開いて <b>安全としてマーク</b> を押すと、そのルールをここに登録します。
-          誤検知だと分かった検知を危険度スコアから外せます（検知一覧・グラフには残ります）。
-          <b>解除</b>で元に戻せます。この操作はこのPC（localhost）からのみ可能です。
-        </div>
-        <div id="safe-list" style="margin-top:8px"></div>
       </div>
 
       <!-- ④⑤ よく出た手口 / 危険だったPC -->
       <div class="dash-grid">
         <div class="card">
-          <h2>⚠️ よく出た危険な手口</h2>
+          <h2>よく出た危険な手口</h2>
           <div class="muted small">同じ攻撃手口が何回見つかったか（多い順）。</div>
           <div id="chart-rules" class="chart-host"></div>
         </div>
         <div class="card">
-          <h2>💻 危険だったパソコン</h2>
+          <h2>危険だったパソコン</h2>
           <div class="muted small">検知が多かったPC（うち緊急+高の件数も表示）。</div>
           <div id="chart-hosts" class="chart-host"></div>
         </div>
@@ -348,7 +354,7 @@
 
       <!-- ⑥ いつ多かったか -->
       <div class="card">
-        <h2>📈 いつ検知が多かったか <span class="muted small" id="timeline-range"></span></h2>
+        <h2>いつ検知が多かったか <span class="muted small" id="timeline-range"></span></h2>
         <div class="muted small">時間帯ごとの検知数（色は重要度）。</div>
         <div id="chart-timeline" class="chart-host"></div>
         <div class="legend" id="timeline-legend"></div>
@@ -356,7 +362,7 @@
 
       <!-- ⑦ 高度な分析（折り畳み） -->
       <details class="card anomalies-card">
-        <summary><b>🔬 高度な分析: 検知パターンの異常</b> <span class="muted small">(上級者向け・クリックで展開)</span></summary>
+        <summary><b>高度な分析: 検知パターンの異常</b> <span class="muted small">(上級者向け・クリックで展開)</span></summary>
         <div class="muted small" style="margin-top:8px">
           バースト (平常比 N 倍)・拡散 (同ルールが複数PC同時)・沈黙 (常時活動PCの無音)・
           時間外 (深夜帯の高重要度) を自動抽出。各行クリックでハント検索へジャンプ。
@@ -372,24 +378,25 @@
 
     <!-- 結果 -->
     <section id="tab-results" class="tab-panel">
-      <div class="tab-intro">
-        <span class="ti-icon">📋</span>
-        <span class="ti-text"><strong>ここでは、スキャンの結果を 1 件ずつ確認できます。</strong>
-          上で調べたいスキャンを開き、下の表で気になる項目をクリックすると、
-          「何が起きたか」「次にすべきこと」が日本語で表示されます。</span>
+      <div class="page-head">
+        <div>
+          <h1>結果</h1>
+          <p>スキャンごとの検知を確認します。行をクリックすると詳細が右側に開きます。</p>
+        </div>
       </div>
-      <div class="card">
+      <div class="card jobs-card">
         <div class="card-head">
           <h2>スキャン履歴</h2>
-          <button id="clear-all-jobs" class="danger-btn" title="全ジョブ・全検知データを消去（抑制ルールは残ります）">🗑 すべて消去</button>
+          <button id="clear-all-jobs" class="danger-btn" title="全ジョブ・全検知データを消去（抑制ルールは残ります）">すべて消去</button>
         </div>
         <table id="jobs-table">
-          <thead><tr><th>ID</th><th>状態</th><th>開始</th><th>所要時間</th><th>検知数</th><th>操作</th></tr></thead>
+          <thead><tr><th>ID</th><th>案件</th><th>状態</th><th>開始</th><th>所要時間</th><th>検知数</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
       <div class="card" id="detection-card" hidden>
         <h2>検知一覧 <span class="muted small" id="detail-jobid"></span></h2>
+        <div id="job-evidence" class="job-evidence muted small" data-no-glossary></div>
         <div class="filters">
           <input id="filter-text" placeholder="フィルタ文字列 (ルール名・チャネル・コンピュータ名…)" />
           <select id="filter-level">
@@ -404,10 +411,13 @@
             <span>抑制済みも表示</span></label>
           <button id="summary-btn">HTML サマリを開く</button>
         </div>
-        <table id="detections-table">
-          <thead><tr><th>時刻</th><th>レベル</th><th>ルール</th><th>コンピュータ</th><th>チャネル</th><th>EID</th><th>判定</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <div class="det-table-wrap">
+          <table id="detections-table">
+            <thead><tr><th>時刻</th><th>レベル</th><th>ルール</th><th>コンピュータ</th><th>チャネル</th><th>EID</th><th>判定</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="detail-backdrop" hidden></div>
         <div id="detail-wrap" hidden>
           <div class="detail-head">
             <div class="detail-title">
@@ -416,6 +426,7 @@
               <span class="muted small" id="dt-meta"></span>
             </div>
             <div class="attack-tags" id="dt-attack"></div>
+            <button id="detail-close" class="detail-close" type="button" aria-label="詳細を閉じる">✕</button>
           </div>
           <div class="verdict-bar">
             <span class="muted small">判定:</span>
@@ -511,13 +522,83 @@
       </div>
     </section>
 
+    <!-- ケース / 証跡 / 監査 -->
+    <section id="tab-cases" class="tab-panel">
+      <div class="page-head">
+        <div>
+          <h1>ケース / 証跡</h1>
+          <p>案件ごとに証跡ハッシュ・スキャン・監査履歴をまとめます。削除したジョブの証跡記録は残ります。</p>
+        </div>
+      </div>
+
+      <div class="case-grid">
+        <div class="card">
+          <h2>ケースを作成</h2>
+          <div class="muted small">案件名はスキャン画面でも指定できます。同じ名前は同じオープンケースにまとまります。</div>
+          <div class="case-form">
+            <label>案件名 <input id="case-new-name" maxlength="120" placeholder="例: IR-2026-042 横展開調査" /></label>
+            <label>参照番号 <input id="case-new-ref" maxlength="120" placeholder="チケット / インシデント番号（任意）" /></label>
+            <label>説明 <input id="case-new-desc" maxlength="2000" placeholder="対象範囲・依頼元など（任意）" /></label>
+            <button id="case-create-btn" class="primary" type="button">ケースを作成</button>
+            <span id="case-create-status" class="muted small"></span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>ケース一覧 <span class="muted small" id="cases-count"></span></h2>
+          <table id="cases-table">
+            <thead><tr><th>案件名</th><th>参照</th><th>ジョブ</th><th>検知</th><th>証跡</th><th>更新</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" id="case-detail" hidden>
+        <div class="card-head">
+          <h2 id="case-detail-name">ケース詳細</h2>
+          <span class="row-actions">
+            <button id="case-scan-btn" class="ghost-btn small" type="button" hidden>このケースでスキャン</button>
+            <button id="case-detail-close" class="ghost-btn small" type="button">閉じる</button>
+          </span>
+        </div>
+        <div id="case-detail-meta" class="muted small"></div>
+        <h3>証跡</h3>
+        <div class="det-table-wrap">
+          <table id="case-evidence-table">
+            <thead><tr><th>受領</th><th>ファイル</th><th>種別</th><th>サイズ</th><th>SHA-256</th><th>ジョブ</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <h3>ジョブ</h3>
+        <div class="det-table-wrap">
+          <table id="case-jobs-table">
+            <thead><tr><th>ID</th><th>状態</th><th>開始</th><th>検知数</th><th>証跡 SHA-256</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <h3>監査履歴</h3>
+        <div id="case-audit" class="audit-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>監査ログ <span class="muted small" id="audit-count"></span></h2>
+          <span class="row-actions">
+            <button id="audit-verify-btn" class="ghost-btn small" type="button">ハッシュチェーンを検証</button>
+            <button id="audit-refresh-btn" class="ghost-btn small" type="button">↻ 更新</button>
+          </span>
+        </div>
+        <div id="audit-integrity" class="audit-integrity muted small"></div>
+        <div id="audit-list" class="audit-list"></div>
+      </div>
+    </section>
+
     <!-- ハント -->
     <section id="tab-hunt" class="tab-panel">
-      <div class="tab-intro">
-        <span class="ti-icon">🔎</span>
-        <span class="ti-text"><strong>ここでは、過去すべての結果から条件をしぼって「さがす」ことができます。</strong>
-          左のボタン（例:「直近24hの重大」）を押すと、よくある探し方をすぐ試せます。
-          見つけた結果は CSV で書き出せます。</span>
+      <div class="page-head">
+        <div>
+          <h1>検知をさがす</h1>
+          <p>保存済みの検知を条件で絞り込みます。プリセットから始めるのが早道です。</p>
+        </div>
       </div>
       <div class="hunt-grid">
         <!-- 左: 検索フォーム + プリセット -->
@@ -578,27 +659,31 @@
             <div id="hunt-levels" class="chip-group"></div>
           </label>
 
-          <label>チャネル
-            <select id="hunt-channel"><option value="">(指定なし)</option></select>
-          </label>
-          <label>EventID
-            <input id="hunt-eid" placeholder="例: 4624 / 7045" />
-          </label>
           <label>自由文字列 <span class="hint">(ルール名・コンピュータ・raw JSON 全文)</span>
             <input id="hunt-q" placeholder="例: lsass / comsvcs / wmic" />
           </label>
-          <label>判定状態
-            <select id="hunt-verdict">
-              <option value="">すべて</option>
-              <option value="tp">本物 (TP)</option>
-              <option value="fp">誤検知 (FP)</option>
-              <option value="unverdicted">未判定</option>
-            </select>
-          </label>
-          <label class="row inline">
-            <input type="checkbox" id="hunt-include-suppressed" />
-            <span>抑制済みも含める</span>
-          </label>
+
+          <details class="advanced">
+            <summary>追加条件</summary>
+            <label>チャネル
+              <select id="hunt-channel"><option value="">(指定なし)</option></select>
+            </label>
+            <label>EventID
+              <input id="hunt-eid" placeholder="例: 4624 / 7045" />
+            </label>
+            <label>判定状態
+              <select id="hunt-verdict">
+                <option value="">すべて</option>
+                <option value="tp">本物 (TP)</option>
+                <option value="fp">誤検知 (FP)</option>
+                <option value="unverdicted">未判定</option>
+              </select>
+            </label>
+            <label class="row inline">
+              <input type="checkbox" id="hunt-include-suppressed" />
+              <span>抑制済みも含める</span>
+            </label>
+          </details>
 
           <div class="hunt-actions">
             <button id="hunt-run" class="primary">検索</button>
@@ -607,8 +692,10 @@
             <button id="hunt-export" class="ghost-btn small">CSV 出力</button>
           </div>
 
-          <h3>保存済みクエリ</h3>
-          <div id="hunt-saved" class="muted small">(まだありません)</div>
+          <details class="advanced">
+            <summary>保存済みクエリ</summary>
+            <div id="hunt-saved" class="muted small">(まだありません)</div>
+          </details>
         </div>
 
         <!-- 右: 結果 + ピボット -->
@@ -631,21 +718,179 @@
       </div>
     </section>
 
+    <!-- ログ検索: 生 EVTX を keyword / regex で引く -->
+    <section id="tab-logs" class="tab-panel">
+      <div class="page-head">
+        <div>
+          <h1>生ログ</h1>
+          <p>EVTX をそのまま keyword / 正規表現で引きます。検知の理由を生ログで確かめるときに。</p>
+        </div>
+      </div>
+
+      <div class="workbench">
+        <div class="card bench-form">
+          <div class="bench-title">
+            <span class="eyebrow">Query</span>
+            <button id="log-refresh" class="ghost-btn small" title="ファイル一覧を再読込">↻</button>
+          </div>
+
+          <label class="field">
+            <span class="field-label">対象ファイル</span>
+            <select id="log-source"></select>
+            <span class="field-hint" id="log-source-hint">workspace/uploads 配下の EVTX / JSONL</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">検索語</span>
+            <input id="log-query" placeholder="lsass 4624 C:\Temp （空白区切り）" autocomplete="off" />
+          </label>
+
+          <button id="log-run" class="primary bench-run">検索する</button>
+
+          <details class="advanced">
+            <summary>絞り込み / オプション</summary>
+            <div class="switch-row">
+              <label class="switch"><input type="checkbox" id="log-ignore-case" checked /><span>大小無視</span></label>
+              <label class="switch"><input type="checkbox" id="log-and" /><span>AND</span></label>
+              <label class="switch"><input type="checkbox" id="log-regex" /><span>正規表現</span></label>
+            </div>
+
+            <div class="field-grid">
+              <label class="field"><span class="field-label">Event ID</span><input id="log-eid" placeholder="1, 3, 4624" /></label>
+              <label class="field"><span class="field-label">Channel</span><input id="log-channel" placeholder="Sysmon" /></label>
+            </div>
+            <div class="field-grid">
+              <label class="field"><span class="field-label">Host</span><input id="log-host" placeholder="WS-*" /></label>
+              <label class="field"><span class="field-label">表示件数</span>
+                <select id="log-limit">
+                  <option>100</option><option selected>200</option>
+                  <option>500</option><option>1000</option>
+                </select>
+              </label>
+            </div>
+            <div class="field-grid stack">
+              <label class="field"><span class="field-label">開始</span><input id="log-start" placeholder="2024-01-01 00:00" /></label>
+              <label class="field"><span class="field-label">終了</span><input id="log-end" placeholder="2024-12-31 23:59" /></label>
+            </div>
+          </details>
+
+          <p class="bench-note">検索語を空欄にすると全イベントを返します。大きな EVTX では時間がかかるので条件を足してください。</p>
+        </div>
+
+        <div class="card bench-result">
+          <div class="bench-result-head">
+            <div class="bench-stat">
+              <span class="bench-count" id="log-count">—</span>
+              <span class="field-hint" id="log-meta">条件を入れて検索してください</span>
+            </div>
+            <div class="bench-actions">
+              <button id="log-clear" class="ghost-btn small">クリア</button>
+              <button id="log-export" class="ghost-btn small" disabled>CSV</button>
+            </div>
+          </div>
+          <div id="log-result" class="bench-body scroll-y">
+            <div class="empty-state">
+              <div class="empty-mark">⌕</div>
+              <p>検索結果はここに出ます。<br/>行をクリックすると全フィールドが開きます。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Elasticsearch: 検知の投入と検索 -->
+    <section id="tab-elastic" class="tab-panel">
+      <div class="page-head">
+        <div>
+          <h1>Elasticsearch</h1>
+          <p>解析済みの検知を ES に送り、Kibana や既存の SOC 基盤で扱えるようにします。</p>
+        </div>
+      </div>
+
+      <div class="workbench elastic">
+        <div class="card bench-form">
+          <div class="bench-title">
+            <span class="eyebrow">Connection</span>
+            <button id="es-test" class="ghost-btn small">接続テスト</button>
+          </div>
+
+          <label class="field"><span class="field-label">Endpoint</span>
+            <input id="es-url" placeholder="http://127.0.0.1:9200" autocomplete="off" /></label>
+          <label class="field"><span class="field-label">Index</span>
+            <input id="es-index" placeholder="hayabusa-detections" autocomplete="off" /></label>
+          <details class="advanced">
+            <summary>認証 / TLS</summary>
+            <div class="field-grid">
+              <label class="field"><span class="field-label">User</span>
+                <input id="es-user" autocomplete="off" /></label>
+              <label class="field"><span class="field-label">Password</span>
+                <input id="es-pass" type="password" placeholder="空欄なら変更しない" autocomplete="new-password" /></label>
+            </div>
+            <label class="field"><span class="field-label">API key (Base64)</span>
+              <input id="es-key" placeholder="空欄なら変更しない" autocomplete="off" /></label>
+            <label class="switch"><input type="checkbox" id="es-tls" checked /><span>TLS 証明書を検証する</span></label>
+          </details>
+
+          <div class="bench-actions">
+            <button id="es-save" class="primary">設定を保存</button>
+            <button id="es-status" class="ghost-btn">件数を確認</button>
+          </div>
+          <div id="es-conn" class="conn-state">未接続</div>
+
+          <div class="rule-hr"></div>
+
+          <div class="bench-title"><span class="eyebrow">Index</span></div>
+          <label class="field"><span class="field-label">投入する検知</span>
+            <select id="es-job"><option value="">すべてのスキャン</option></select></label>
+          <label class="switch"><input type="checkbox" id="es-reset" /><span>インデックスを作り直す</span></label>
+          <button id="es-index-btn" class="primary bench-run">Elasticsearch へ投入</button>
+          <p class="bench-note" id="es-index-note">SQLite に保存済みの検知を _bulk で送ります。</p>
+        </div>
+
+        <div class="card bench-result">
+          <div class="bench-result-head">
+            <div class="bench-stat">
+              <span class="bench-count" id="es-count">—</span>
+              <span class="field-hint" id="es-meta">Lucene クエリで検索</span>
+            </div>
+            <a id="es-kibana" class="ghost-btn small is-hidden" target="_blank" rel="noopener">Kibana で開く ↗</a>
+          </div>
+
+          <div class="es-searchbar">
+            <input id="es-q" placeholder="rule_title:lsass OR event_id:1102 （* で全件）" />
+            <select id="es-level">
+              <option value="">全レベル</option>
+              <option value="critical">critical</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+            </select>
+            <input id="es-host" placeholder="host" />
+            <button id="es-run" class="primary">検索</button>
+          </div>
+          <div id="es-result" class="bench-body scroll-y">
+            <div class="empty-state">
+              <div class="empty-mark">◇</div>
+              <p>接続して「検知を投入」したあと、ここで検索できます。<br/>設定は workspace/elastic.json に保存されます。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ホスト資産ビュー -->
     <section id="tab-hosts" class="tab-panel">
-      <div class="tab-intro">
-        <span class="ti-icon">💻</span>
-        <span class="ti-text"><strong>ここでは、パソコンごとに「危険度」をつけて並べます。</strong>
-          上から順に注意が必要なパソコンです。クリックすると、そのパソコンで何が多いか詳しく見られます。</span>
+      <div class="page-head">
+        <div>
+          <h1>ホスト</h1>
+          <p>パソコンごとの危険度を並べます。行をクリックすると内訳が開きます。</p>
+        </div>
       </div>
       <div class="card hosts-overview">
         <div class="hosts-head">
           <h2>ホスト資産</h2>
           <div class="muted small">
-            検知データから自動生成。リスクスコアは
-            <b>critical・high の異なる検知ルール数だけ</b>から算出
-            <code>critical×30 + high×12</code>。medium・low や活動量（ログの多さ）では
-            上がりません。TP/FP と直近度補正を掛けて 0–100。
+            リスク = <code>critical×30 + high×12</code> を 0–100 に補正（medium 以下は影響しません）。
           </div>
           <div>
             <label class="row inline"><input type="checkbox" id="hosts-include-suppressed" />
@@ -682,6 +927,7 @@
             <div id="host-detail-timeline" class="chart-host"></div>
             <div id="host-detail-actions" class="hunt-actions">
               <button id="host-pivot-hunt">このホストでハント検索 →</button>
+              <button id="host-pivot-graph">このホストの関係図を見る →</button>
             </div>
           </div>
         </div>
@@ -690,10 +936,11 @@
 
     <!-- プロセスツリー -->
     <section id="tab-proctree" class="tab-panel">
-      <div class="tab-intro">
-        <span class="ti-icon">🌳</span>
-        <span class="ti-text"><strong>「どのプログラムが、どのプログラムを起動したか」を親子ツリーで表示。</strong>
-          攻撃は「正規プロセス → 不審な子プロセス」の連鎖で起きます。検知が出たプロセスは色付きで強調します。</span>
+      <div class="page-head">
+        <div>
+          <h1>プロセスツリー</h1>
+          <p>どのプログラムがどのプログラムを起動したかを親子ツリーで表示します。</p>
+        </div>
       </div>
       <div class="card">
         <div class="card-head">
@@ -713,34 +960,130 @@
       </div>
     </section>
 
+    <!-- プロセス / ファイル関係図 -->
+    <section id="tab-graph" class="tab-panel">
+      <div class="page-head">
+        <div>
+          <h1>関係図</h1>
+          <p>検知のみ / ログ全体を切り替え、プロセスの起動・ファイル作成・ネットワーク接続の関係を表示します。ノードや線をクリックすると詳細が開きます。ドラッグ / 2本指スクロールで移動、Ctrl + ホイールでズームできます。</p>
+        </div>
+      </div>
+      <div class="card graph-card">
+        <div class="card-head">
+          <h2>プロセス / ファイル関係 <span class="muted small" id="graph-count"></span>
+            <span id="graph-focus-badge" class="graph-focus-badge is-hidden">フォーカス: <b id="graph-focus-name"></b><button id="graph-focus-clear" type="button" title="フォーカス解除">×</button></span>
+          </h2>
+          <span class="dash-mini-ctrl">
+            <label>表示 <select id="graph-mode">
+              <option value="detections">検知のみ</option>
+              <option value="all">ログ全体（全イベント）</option>
+            </select></label>
+            <label>PC <select id="graph-computer"><option value="">選択してください</option></select></label>
+            <label>対象ファイル <select id="graph-job"><option value="">全ファイル</option></select></label>
+            <label class="row inline"><input type="checkbox" id="graph-suppressed" /><span>抑制も含む</span></label>
+            <button id="graph-generate" class="primary small" type="button">図を生成</button>
+          </span>
+        </div>
+        <div class="graph-toolbar">
+          <span class="graph-legend">
+            <span class="g-legend g-proc">プロセス</span>
+            <span class="g-legend g-id">ユーザー</span>
+            <span class="g-legend g-obj">対象</span>
+            <span class="g-legend g-file">ファイル</span>
+            <span class="g-legend g-net">ネットワーク</span>
+            <span class="g-legend g-hit">検知あり</span>
+            <span class="g-legend g-edge">起動 / 作成 / 接続 / 監査</span>
+            <span class="g-legend g-inferred">推定</span>
+          </span>
+          <span class="graph-actions">
+            <span class="graph-search">
+              <input id="graph-search" type="search" placeholder="プロセス名で検索" autocomplete="off" />
+              <button id="graph-search-btn" class="ghost-btn small" type="button">検索</button>
+              <span class="graph-nav">
+                <button id="graph-prev" class="ghost-btn small" type="button" title="前のヒット">‹</button>
+                <button id="graph-next" class="ghost-btn small" type="button" title="次のヒット">›</button>
+              </span>
+              <span id="graph-search-count" class="muted small"></span>
+              <button id="graph-search-clear" class="ghost-btn small" type="button">クリア</button>
+            </span>
+            <button id="graph-filter-btn" class="ghost-btn small" type="button">フィルタ<span id="graph-filter-badge"></span></button>
+            <span class="graph-menu-wrap">
+              <button id="graph-view-btn" class="ghost-btn small" type="button">表示 ▾</button>
+              <div id="graph-view-menu" class="graph-menu is-hidden">
+                <button id="graph-center" type="button">中央に配置</button>
+                <button id="graph-fit" type="button">全体に合わせる</button>
+                <button id="graph-fullscreen" type="button">全画面</button>
+              </div>
+            </span>
+            <span class="graph-menu-wrap">
+              <button id="graph-save-btn" class="ghost-btn small" type="button">保存 ▾</button>
+              <div id="graph-save-menu" class="graph-menu is-hidden">
+                <button type="button" data-save="svg">SVG で保存</button>
+                <button type="button" data-save="png">PNG で保存</button>
+              </div>
+            </span>
+            <span class="graph-zoom">
+              <button id="graph-zoom-out" class="ghost-btn small" type="button" title="縮小">−</button>
+              <span id="graph-zoom-label">100%</span>
+              <button id="graph-zoom-in" class="ghost-btn small" type="button" title="拡大">+</button>
+            </span>
+          </span>
+        </div>
+        <div id="graph-filter-pop" class="graph-pop is-hidden">
+          <div class="gp-title">表示フィルタ</div>
+          <div class="gp-types">
+            <label><input type="checkbox" data-gtype="process" checked /> プロセス</label>
+            <label><input type="checkbox" data-gtype="file" checked /> ファイル</label>
+            <label><input type="checkbox" data-gtype="network" checked /> ネットワーク</label>
+            <label><input type="checkbox" data-gtype="identity" checked /> ユーザー</label>
+            <label><input type="checkbox" data-gtype="object" checked /> 対象</label>
+          </div>
+          <div class="gp-time">
+            <label>開始 <input id="graph-from" type="datetime-local" /></label>
+            <label>終了 <input id="graph-to" type="datetime-local" /></label>
+          </div>
+          <label class="gp-noise"><input type="checkbox" id="graph-hide-noise" /> ノイズを隠す
+            <span class="muted small" title="孤立ノードと、検知に関係しない末端のファイル/通信/対象を隠します">?</span>
+          </label>
+          <div class="gp-actions">
+            <button id="graph-filter-reset" class="ghost-btn small" type="button">リセット</button>
+            <button id="graph-filter-apply" class="primary small" type="button">適用</button>
+          </div>
+        </div>
+        <div id="graph-host" class="graph-host scroll-y">
+          <div class="empty-state"><div class="icon">🕸️</div>
+            <div class="title">PC を選んで関係図を生成してください</div>
+            プロセスの起動とファイル作成の検知から関係を復元します。</div>
+        </div>
+        <div id="graph-detail" class="graph-detail muted small"></div>
+      </div>
+    </section>
+
     <!-- 危険度ランキング (公開モードのメイン) -->
     <section id="tab-ranking" class="tab-panel">
-      <div class="tab-intro">
-        <span class="ti-icon">🏆</span>
-        <span class="ti-text"><strong>アップロードされたログを「危険度スコア」でランキング。</strong>
-          どれだけ“危ない”ログを作れるか競えます。スキャン時にチーム名を入れると、その名前で並びます。</span>
+      <div class="page-head">
+        <div>
+          <h1>ランキング</h1>
+          <p>アップロードされたログを危険度スコアで並べます。</p>
+        </div>
       </div>
       <div class="card">
         <div class="card-head">
           <h2>危険度ランキング <span class="muted small" id="ranking-count"></span></h2>
           <button id="ranking-refresh" class="ghost-btn small">↻ 更新</button>
         </div>
-        <p class="muted small">スコア = <b>明らかな侵害</b>の重さ（0–100）。
-          <b>critical・high の“異なる手口の数”だけ</b>で計算します（critical +30 / high +12）。
-          medium・low や活動量（ログの多さ・同じ警告の繰り返し）ではスコアは上がりません。
-          <b>危険な手口（critical・high）が出るほど</b>高くなります。
-          <br>誤検知対策として、<b>多くのPCで共通して出るルール</b>（環境ノイズ）や
-          <b>除外指定したルール</b>はスコアに数えません。</p>
+        <p class="muted small">スコア = critical +30 / high +12 の異なる手口の数（0–100）。medium 以下・ログ量・環境ノイズ・除外ルールは数えません。</p>
         <div id="ranking-list" class="ranking-list"></div>
       </div>
     </section>
 
     <!-- ルール -->
     <section id="tab-rules" class="tab-panel">
-      <div class="tab-intro">
-        <span class="ti-icon">📖</span>
-        <span class="ti-text"><strong>ここでは、検出に使う「ルール」と「悪いものリスト」を確認・更新できます。</strong>
-          ふだんは触らなくて大丈夫です。最新の脅威情報に更新したいときは「フィードを更新」を押します。</span>
+      <div class="page-head">
+        <div>
+          <h1>検知ルール</h1>
+          <p>検出に使うルールと IoC フィードを確認・更新します。通常は触らなくて大丈夫です。</p>
+        </div>
       </div>
       <div class="rules-row">
       <div class="card">
@@ -779,12 +1122,11 @@
       </div>
 
       <div class="card">
-        <h2>抑制ルール一覧</h2>
+        <h2>抑制 / 安全リスト</h2>
         <div class="muted small">抑制は検知を <em>削除せず</em> 結果から非表示にするだけです。
+          「安全としてマーク」したルールもここに並び、危険度スコアの計算から外れます。<b>解除</b>で元に戻せます。
           内容は <code>suppressions/&lt;host&gt;.json</code> や <code>suppressions/global.json</code>
-          にスナップショットとして自動エクスポートされ、Git でバージョン管理できます。
-          スコープが <code>host</code> や <code>rule+host</code> の場合、コンピュータ名にはワイルドカード
-          (<code>*</code>, <code>?</code>) が使えます。</div>
+          に自動保存されます。</div>
         <table id="suppressions-table">
           <thead><tr><th>ID</th><th>範囲</th><th>RuleID</th><th>対象ホスト</th><th>理由</th><th>登録日時</th><th></th></tr></thead>
           <tbody></tbody>
@@ -795,8 +1137,13 @@
 
     <!-- 情報 -->
     <section id="tab-about" class="tab-panel">
+      <div class="page-head">
+        <div>
+          <h1>このツール</h1>
+          <p>hayabusa-plus の位置づけと注意事項。</p>
+        </div>
+      </div>
       <div class="card">
-        <h2>このコンソールについて</h2>
         <p>Hayabusa DFIR スキャナの localhost 用 GUI です。同梱の Hayabusa
           CLI を薄くラップした制御プレーンとして動作します。EVTX のパース
           と Sigma マッチングはすべて上流のバイナリに委譲しています。
@@ -820,45 +1167,11 @@
     <span class="sep">·</span>
     <span class="group" id="sb-feeds" title="IoC フィード">IoC: —</span>
     <span class="sep">·</span>
-    <span class="group" id="sb-admin" title="管理者権限">権限: —</span>
+    <span class="group" id="sb-mode" title="解析ソース">取込専用</span>
     <span class="right">
       <span class="group" id="sb-job">最終ジョブ: —</span>
     </span>
   </footer>
-
-  <!-- チャネル選択モーダル: 「このパソコン」スキャン時のチャネル絞り込み
-       Visibility is toggled by adding/removing the `is-hidden` class
-       (see .modal.is-hidden in style.css). We deliberately do NOT use
-       the [hidden] attribute because CSS specificity battles between
-       UA `[hidden]{display:none}` and our `.modal{display:flex}` make
-       it unreliable across browsers. -->
-  <div id="channels-modal" class="modal is-hidden"
-       onclick="if(event.target===this)this.classList.add('is-hidden')">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h2>スキャン対象チャネル</h2>
-        <button id="channels-close" class="ghost-btn small"
-                onclick="document.getElementById('channels-modal').classList.add('is-hidden')"
-                title="閉じる (Esc)">×</button>
-      </div>
-      <div class="modal-body">
-        <div class="muted small">
-          ここで選んだチャネルだけがスキャンされます。デフォルトは DFIR 重要度の高い
-          チャネルです。サイズが大きく不要そうなものは外すとスキャンが速くなります。
-        </div>
-        <div class="modal-actions-inline">
-          <button id="ch-select-priority">重要なものだけ</button>
-          <button id="ch-select-all">全部</button>
-          <button id="ch-select-none">なし</button>
-        </div>
-        <div id="channels-list" class="channels-list scroll-y"></div>
-      </div>
-      <div class="modal-foot">
-        <span id="channels-summary" class="muted small"></span>
-        <button id="channels-confirm" class="primary">この選択でスキャン</button>
-      </div>
-    </div>
-  </div>
 
   <!-- チーム名入力モーダル (公開モード): 「スキャン開始」初回に1度だけ表示。
        入力名はブラウザに記憶し、次回以降は出さずにその名前で更新する。 -->
@@ -866,7 +1179,7 @@
        onclick="if(event.target===this)this.classList.add('is-hidden')">
     <div class="modal-card" style="max-width:440px">
       <div class="modal-head">
-        <h2>🏆 チーム名 / ニックネーム</h2>
+        <h2>チーム名 / ニックネーム</h2>
         <button class="ghost-btn small"
                 onclick="document.getElementById('nickname-modal').classList.add('is-hidden')"
                 title="閉じる (Esc)">×</button>
@@ -888,5 +1201,6 @@
 
   <script src="/static/charts.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/extra.js"></script>
 </body>
 </html>

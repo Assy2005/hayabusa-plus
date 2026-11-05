@@ -20,11 +20,14 @@ Design notes
   console — there is no authentication.
 """
 
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 import queue
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -43,25 +46,38 @@ sys.path.insert(0, str(sys_path_anchor))
 import store as _store  # noqa: E402
 import rule_index as _rule_index  # noqa: E402
 import process_tree as _process_tree  # noqa: E402
+import relationship_graph as _relationship_graph  # noqa: E402
 import behavioral as _behavioral  # noqa: E402
-import feed_fetcher as _feed_fetcher  # noqa: E402
+import feed_fetcher as _feed_fetcher
+import extras as _extras  # noqa: E402
+import audit as _audit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 GUI_DIR = ROOT / "gui"
 STATIC_DIR = GUI_DIR / "static"
-WORKSPACE = ROOT / "workspace"
+
+# Data root is intentionally separable from the code checkout. An enterprise
+# deployment puts the case database, uploads, jobs and audit log on a
+# dedicated encrypted volume (or WSL ext4 VHD), not on a synced OneDrive/
+# desktop folder. Defaults to ./workspace for a zero-config checkout.
+_DATA_ROOT_ENV = (os.environ.get("HAYABUSA_DATA_ROOT")
+                  or os.environ.get("HAYABUSA_WORKSPACE") or "").strip()
+WORKSPACE = (Path(_DATA_ROOT_ENV).expanduser().resolve()
+             if _DATA_ROOT_ENV else (ROOT / "workspace").resolve())
 UPLOAD_DIR = WORKSPACE / "uploads"
 RESULTS_DIR = WORKSPACE / "results"
 JOBS_DIR = WORKSPACE / "jobs"
+AUDIT_DIR = WORKSPACE / "audit"
 LOOKUPS_DIR = ROOT / "lookups"
 FP_HISTORY_DIR = LOOKUPS_DIR / "fp_history"
 BIN_DIR = ROOT / "bin"
 DB_PATH = WORKSPACE / "hayabusa-gui.sqlite"
 
-for d in (UPLOAD_DIR, RESULTS_DIR, JOBS_DIR, FP_HISTORY_DIR):
+for d in (UPLOAD_DIR, RESULTS_DIR, JOBS_DIR, AUDIT_DIR, FP_HISTORY_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-STORE = _store.Store(DB_PATH, FP_HISTORY_DIR)
+STORE = _store.Store(DB_PATH, FP_HISTORY_DIR, ROOT / "suppressions")
+AUDIT = _audit.AuditLog(AUDIT_DIR / "audit.jsonl")
 RULES_DIR_FOR_INDEX = BIN_DIR / "rules"
 CUSTOM_RULES_DIR = ROOT / "rules-custom"
 RULE_INDEX = _rule_index.RuleIndex(RULES_DIR_FOR_INDEX, CUSTOM_RULES_DIR)
@@ -69,11 +85,62 @@ RULE_INDEX = _rule_index.RuleIndex(RULES_DIR_FOR_INDEX, CUSTOM_RULES_DIR)
 # --- Bind / network mode -----------------------------------------------------
 # Default is localhost-only (the safe single-user posture this tool was built
 # for). Set HAYABUSA_GUI_HOST=0.0.0.0 to expose it on the LAN — e.g. a lab PC
-# where anyone may investigate logs. Network mode has NO authentication, so it
-# is only appropriate on a trusted LAN. Live analysis is refused in this mode.
+# where anyone may upload logs and view the danger ranking. Network mode has NO
+# authentication, so it is only appropriate on a trusted LAN. The server
+# refuses a non-loopback bind without an explicit opt-in (see below).
 _LOOPBACK = {"127.0.0.1", "localhost", "::1", ""}
 BIND_HOST = os.environ.get("HAYABUSA_GUI_HOST", "127.0.0.1").strip()
 NETWORK_MODE = BIND_HOST not in _LOOPBACK
+
+# Defence in depth: the shell launchers already refuse --shared without an
+# explicit opt-in, but a direct `HAYABUSA_GUI_HOST=0.0.0.0 python server.py`
+# must not silently expose an unauthenticated evidence console either.
+if NETWORK_MODE and os.environ.get("HAYABUSA_ALLOW_UNAUTHENTICATED") != "1":
+    sys.stderr.write(
+        "[hayabusa-plus] refusing to bind a non-loopback address without\n"
+        "HAYABUSA_ALLOW_UNAUTHENTICATED=1. This console has no authentication\n"
+        "and exposes evidence, detections and case metadata.\n")
+    raise SystemExit(3)
+
+
+def _is_wsl() -> bool:
+    """True inside WSL1/WSL2 (used only for display / guidance)."""
+    if sys.platform != "linux":
+        return False
+    try:
+        return "microsoft" in Path("/proc/version").read_text(
+            encoding="utf-8", errors="replace").lower()
+    except OSError:
+        return False
+
+
+def _runtime_name() -> str:
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    if _is_wsl():
+        return "wsl"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return sys.platform
+
+
+def deployment_posture() -> dict:
+    """Facts the UI uses to explain where evidence is being processed."""
+    return {
+        "runtime": _runtime_name(),
+        "platform": sys.platform,
+        "hostname": socket.gethostname(),
+        "bind_host": BIND_HOST,
+        "bind_scope": "lan" if NETWORK_MODE else "loopback",
+        "network_mode": NETWORK_MODE,
+        "auth": "none",
+        "data_root": str(WORKSPACE),
+        "audit_path": str(AUDIT.path),
+        "audit_entries": AUDIT.count(),
+        "actor": _audit.AuditLog.actor_default(),
+    }
 
 # Windows event-log files begin with the ASCII magic "ElfFile\0". We check
 # this on upload so a failed download (e.g. a GitHub "429 Too Many Requests"
@@ -94,89 +161,6 @@ MAX_JSON_BYTES = 4 * 1024 * 1024          # 4 MiB  (any other POST/DELETE body)
 # Each scan forks a hayabusa subprocess; cap concurrency so a flood of /api/scan
 # can't exhaust CPU/RAM on the host. Queued+running counted together.
 MAX_CONCURRENT_SCANS = 2
-
-# System-EVTX inspection root on Windows. We only attempt to read this when
-# the user explicitly asks via /api/system/* — never automatically.
-SYSTEM_EVTX_ROOT = Path("C:/Windows/System32/winevt/Logs")
-SYSTEM_SNAPSHOT_DIR = UPLOAD_DIR / "system-snapshot"
-
-
-def _is_admin_windows() -> bool:
-    """Return True when the current process holds elevated rights.
-
-    Uses the official shell32!IsUserAnAdmin call rather than checking for
-    membership in BUILTIN\\Administrators, because UAC-restricted tokens
-    return False even for users in the Administrators group — which is the
-    behaviour we want (we can't open System32\\winevt\\Logs from a
-    restricted token).
-    """
-    if sys.platform != "win32":
-        return False
-    try:
-        import ctypes
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001
-        return False
-
-
-# Channels we always surface first in the UI — they're the high-signal
-# DFIR sources. Anything else is grouped under "その他" by category.
-PRIORITY_CHANNELS = [
-    "Security",
-    "System",
-    "Application",
-    "Microsoft-Windows-Sysmon%4Operational",
-    "Microsoft-Windows-PowerShell%4Operational",
-    "Windows PowerShell",
-    "Microsoft-Windows-WMI-Activity%4Operational",
-    "Microsoft-Windows-TaskScheduler%4Operational",
-    "Microsoft-Windows-Windows Defender%4Operational",
-    "Microsoft-Windows-CodeIntegrity%4Operational",
-    "Microsoft-Windows-AppLocker%4EXE and DLL",
-    "Microsoft-Windows-Bits-Client%4Operational",
-]
-PRIORITY_SET = {name.lower() for name in PRIORITY_CHANNELS}
-
-
-def _list_system_channels() -> list[dict]:
-    """Inventory every .evtx file under the Windows event-log directory.
-
-    We tolerate per-file failures: it's common for a non-admin process to
-    enumerate the directory but fail to stat individual privileged files.
-    We always emit a row so the analyst sees which channel was unreachable.
-    """
-    out: list[dict] = []
-    if not SYSTEM_EVTX_ROOT.exists():
-        return out
-    try:
-        entries = sorted(SYSTEM_EVTX_ROOT.glob("*.evtx"),
-                         key=lambda p: p.name.lower())
-    except OSError:
-        return out
-    for p in entries:
-        readable = False
-        size = None
-        mtime = None
-        try:
-            st = p.stat()
-            size = st.st_size
-            mtime = st.st_mtime
-            # Cheap readability probe — open + close.
-            with open(p, "rb"):
-                readable = True
-        except OSError:
-            pass
-        nice = p.stem.replace("%4", "/")
-        out.append({
-            "name": p.name,
-            "channel": nice,
-            "size": size,
-            "mtime": mtime,
-            "readable": readable,
-            "priority": p.stem.lower() in PRIORITY_SET,
-        })
-    return out
-
 
 def find_hayabusa() -> Path:
     """Locate the hayabusa binary inside ./bin (cross-platform).
@@ -208,6 +192,17 @@ HAYABUSA_BIN = find_hayabusa()
 RULES_DIR = BIN_DIR / "rules"
 CONFIG_DIR = BIN_DIR / "config"
 
+# Shared context for the optional extras module (raw log search + Elastic).
+EXTRAS_CTX = {
+    "root": ROOT,
+    "workspace": WORKSPACE,
+    "uploads": UPLOAD_DIR,
+    "hayabusa": HAYABUSA_BIN,
+    "rules": RULES_DIR,
+    "store": STORE,
+    "network_mode": NETWORK_MODE,
+}
+
 
 # ---------------------------------------------------------------------------
 # Job registry
@@ -223,6 +218,8 @@ class Job:
         "_indexed_lines_at_start",
         "proc", "total_files", "cancel_requested",
         "total_bytes", "progress_pct",
+        "case_id", "evidence_kind", "evidence_path", "evidence_sha256",
+        "evidence_bytes", "evidence_files", "evidence_hashed_at",
     )
 
     def __init__(self, kind: str, args: list[str]):
@@ -249,6 +246,13 @@ class Job:
         self.cancel_requested = False
         self.total_bytes = None         # estimated input size (for % progress)
         self.progress_pct = 0.0         # estimated completion 0..100
+        self.case_id = None
+        self.evidence_kind = None
+        self.evidence_path = None
+        self.evidence_sha256 = None
+        self.evidence_bytes = None
+        self.evidence_files = None
+        self.evidence_hashed_at = None
 
     def to_dict(self):
         return {
@@ -263,6 +267,13 @@ class Job:
             "total_bytes": self.total_bytes,
             "progress_pct": round(self.progress_pct, 1),
             "args": self.args,
+            "case_id": self.case_id,
+            "evidence_kind": self.evidence_kind,
+            "evidence_path": self.evidence_path,
+            "evidence_sha256": self.evidence_sha256,
+            "evidence_bytes": self.evidence_bytes,
+            "evidence_files": self.evidence_files,
+            "evidence_hashed_at": self.evidence_hashed_at,
         }
 
     def cancel(self) -> bool:
@@ -315,6 +326,10 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
+# Per-job capability tokens. In network/public mode an anonymous client may
+# follow only the scan it just started; the token is returned by /api/scan and
+# checked by the SSE endpoint. Loopback operators bypass the token.
+PUBLIC_JOB_TOKENS: dict[str, str] = {}
 
 
 def register_job(job: Job):
@@ -347,6 +362,7 @@ def purge_job(job_id: str) -> int:
     """
     with JOBS_LOCK:
         JOBS.pop(job_id, None)
+        PUBLIC_JOB_TOKENS.pop(job_id, None)
     n = STORE.delete_job(job_id)
     _delete_job_dir(job_id)
     return n
@@ -364,13 +380,77 @@ def safe_workspace_path(p: str) -> Path:
     return candidate
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def hash_scan_target(target: dict) -> dict | None:
+    """Build an evidence hash/manifest before Hayabusa reads the target.
+
+    Files are hashed directly. Directories get a deterministic manifest hash
+    over sorted ``<sha256>  <size>  <relative-path>`` lines, plus per-file
+    hashes retained only in the audit detail (bounded) — the manifest hash is
+    the stable custody value stored with the job.
+    """
+    ttype = target.get("type")
+    if ttype == "file":
+        path = safe_workspace_path(target.get("path", ""))
+        if not path.is_file():
+            return None
+        h = _sha256_file(path)
+        return {"kind": "file", "path": str(path.relative_to(WORKSPACE)).replace("\\", "/"),
+                "sha256": h, "bytes": path.stat().st_size, "files": 1,
+                "hashed_at": time.time()}
+    if ttype == "directory":
+        root = safe_workspace_path(target.get("path", ""))
+        if not root.is_dir():
+            return None
+        rows: list[tuple[str, int, str]] = []
+        total = 0
+        for p in sorted(root.rglob("*")):
+            if not p.is_file():
+                continue
+            if p.suffix.lower() not in (".evtx", ".json", ".jsonl"):
+                continue
+            try:
+                size = p.stat().st_size
+                digest = _sha256_file(p)
+            except OSError:
+                continue
+            rel = p.relative_to(root).as_posix()
+            rows.append((digest, size, rel))
+            total += size
+        manifest = hashlib.sha256()
+        for digest, size, rel in rows:
+            manifest.update(f"{digest}  {size}  {rel}\n".encode("utf-8"))
+        return {"kind": "directory", "path": str(root.relative_to(WORKSPACE)).replace("\\", "/"),
+                "sha256": manifest.hexdigest(), "bytes": total,
+                "files": len(rows), "hashed_at": time.time()}
+    return None
+
+
+def audit(action: str, *, object_type: str = "", object_id: str = "",
+          detail: dict | None = None):
+    """Best-effort audit write; never break an analysis on log failure."""
+    try:
+        return AUDIT.append(action, object_type=object_type,
+                            object_id=object_id, detail=detail)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"[audit] {action} failed: {exc}\n")
+        return None
+
+
 def build_hayabusa_argv(job: Job, params: dict) -> list[str]:
     """
     Translate the GUI's scan request into a hayabusa argv.
 
     Only a vetted subset of CLI flags is exposed. We deliberately do NOT pass
-    arbitrary user-supplied flags through — that would let the UI flip
-    --live-analysis on hosts where it shouldn't run.
+    arbitrary user-supplied flags through — that would let the UI run Hayabusa
+    in unintended modes or against paths outside the evidence workspace.
     """
     # Public (network) "danger ranking" mode: lock the scan parameters so
     # every entrant is scored on identical settings. Only the target comes
@@ -379,7 +459,6 @@ def build_hayabusa_argv(job: Job, params: dict) -> list[str]:
     if NETWORK_MODE:
         params = {
             "target": params.get("target", {}),
-            "allow_live": params.get("allow_live", False),
             "nickname": params.get("nickname", ""),
             "min_level": "medium",
             "remove_duplicates": True,
@@ -407,17 +486,6 @@ def build_hayabusa_argv(job: Job, params: dict) -> list[str]:
             argv += ["-J"]
     elif target.get("type") == "directory":
         argv += ["-d", str(safe_workspace_path(target["path"]))]
-    elif target.get("type") == "live" and params.get("allow_live"):
-        # Live analysis reads THIS host's own event logs. It only makes sense
-        # on a Windows machine the analyst is sitting at — never on a Linux
-        # server or a shared network instance.
-        if sys.platform != "win32":
-            raise ValueError("ライブ解析は Windows でのみ利用できます。"
-                             "EVTX ファイルをアップロードしてください。")
-        if NETWORK_MODE:
-            raise ValueError("ネットワーク公開モードではライブ解析は無効です。"
-                             "EVTX ファイルをアップロードしてください。")
-        argv += ["-l"]
     else:
         raise ValueError("Unknown or unauthorized target type")
 
@@ -450,7 +518,7 @@ def build_hayabusa_argv(job: Job, params: dict) -> list[str]:
     # HTML summary
     argv += ["-H", str(job.result_summary)]
 
-    # Custom rules dir (live-response builds need this)
+    # Rule directories
     argv += ["-r", str(RULES_DIR), "-c", str(RULES_DIR / "config")]
 
     return argv
@@ -562,8 +630,8 @@ def _update_calibration(total_bytes: int, duration_sec: float):
 def _estimate_total_bytes(params: dict) -> int:
     """Best-effort sum of input bytes for the scan target.
 
-    Returns 0 when the size can't be determined (e.g. an unreadable live set);
-    the caller then falls back to an indeterminate bar.
+    Returns 0 when the size can't be determined; the caller then falls back to
+    an indeterminate bar.
     """
     target = params.get("target", {})
     ttype = target.get("type")
@@ -580,9 +648,6 @@ def _estimate_total_bytes(params: dict) -> int:
                     except OSError:
                         pass
             return total
-        if ttype == "live":
-            return sum(c["size"] or 0 for c in _list_system_channels()
-                       if c.get("readable"))
     except OSError:
         return 0
     return 0
@@ -622,6 +687,31 @@ def run_job(job: Job, params: dict):
         job.persist()
         return
 
+    # Hash the evidence before Hayabusa opens it. This is the custody value
+    # shown in the UI and written to the audit chain. It also gives the
+    # progress ticker an accurate byte count.
+    try:
+        ev = hash_scan_target(params.get("target", {}))
+    except Exception as exc:  # noqa: BLE001
+        ev = None
+        job.publish({"type": "error", "stage": "evidence",
+                     "msg": f"証跡ハッシュを計算できませんでした: {exc}"})
+    if ev:
+        job.evidence_kind = ev["kind"]
+        job.evidence_path = ev["path"]
+        job.evidence_sha256 = ev["sha256"]
+        job.evidence_bytes = ev["bytes"]
+        job.evidence_files = ev["files"]
+        job.evidence_hashed_at = ev["hashed_at"]
+        STORE.set_job_evidence(job.id, kind=ev["kind"], path=ev["path"],
+                               sha256=ev["sha256"], size=ev["bytes"],
+                               files=ev["files"], hashed_at=ev["hashed_at"])
+        audit("evidence.hash", object_type="job", object_id=job.id, detail={
+            "case_id": job.case_id, "kind": ev["kind"], "path": ev["path"],
+            "sha256": ev["sha256"], "bytes": ev["bytes"],
+            "files": ev["files"],
+        })
+
     # Estimate input size up front so the progress ticker has something to
     # work with. Cheap (a few stat calls); 0 ⇒ fall back to indeterminate bar.
     job.total_bytes = _estimate_total_bytes(params)
@@ -629,6 +719,10 @@ def run_job(job: Job, params: dict):
     job.status = "running"
     job.persist()
     job.publish({"type": "state", "job": job.to_dict()})
+    audit("scan.start", object_type="job", object_id=job.id, detail={
+        "case_id": job.case_id, "target": params.get("target", {}),
+        "min_level": params.get("min_level"),
+    })
 
     stop_event = threading.Event()
     # Resume from wherever the indexer last left off — usually 0 for a fresh
@@ -684,6 +778,11 @@ def run_job(job: Job, params: dict):
                             (job.finished_at or 0) - job.started_at)
 
     job.persist()
+    audit("scan.finish", object_type="job", object_id=job.id, detail={
+        "case_id": job.case_id, "status": job.status,
+        "detections": job.detection_count,
+        "evidence_sha256": job.evidence_sha256,
+    })
     job.publish({"type": "state", "job": job.to_dict()})
     job.publish({"type": "complete"})
 
@@ -803,15 +902,15 @@ class Handler(BaseHTTPRequestHandler):
 
             # --- 3. Network mode: only allow the two write endpoints the
             #        public UI needs. Everything else (clear history, delete
-            #        jobs, add suppressions, TP/FP verdicts, refresh feeds,
-            #        system import) is an analyst/admin action that an
-            #        anonymous LAN visitor must not reach — both to prevent
-            #        data loss and to stop leaderboard tampering.
+            #        jobs, add suppressions, TP/FP verdicts, refresh feeds)
+            #        is an analyst/admin action that an anonymous LAN visitor
+            #        must not reach — both to prevent data loss and to stop
+            #        leaderboard tampering.
             if NETWORK_MODE:
                 wpath = urlparse(self.path).path
                 allowed = wpath in ("/api/scan", "/api/upload")
                 # The operator (loopback) may also manage the safe-list so they
-                # can suppress false positives from the live 全体ビュー without
+                # can suppress false positives from the 全体ビュー without
                 # stopping the public server. Remote visitors still can't.
                 if not allowed and self._client_is_local():
                     allowed = any(p.match(wpath) for p in self._ADMIN_WRITE_PATHS)
@@ -910,6 +1009,23 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         path = u.path
 
+        # Public/network mode is a ranking/upload surface, not a remote view of
+        # the analyst console. Anonymous clients must not enumerate cases,
+        # evidence, detections, hunts, audit entries or host metadata. The
+        # operator (loopback) keeps full access, and a public scan may still
+        # follow its own job stream with the per-job token issued by /api/scan.
+        if NETWORK_MODE and not self._client_is_local() and path.startswith("/api/"):
+            public_paths = {
+                "/api/health", "/api/config", "/api/workspace",
+                "/api/ranking", "/api/ranking/stats", "/api/collector",
+            }
+            if path not in public_paths and not path.endswith("/stream"):
+                self._send_json({
+                    "error": "local_only",
+                    "message": "この情報は解析ホストのローカル画面でのみ参照できます。",
+                }, 403)
+                return
+
         if path == "/" or path == "/index.html":
             self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
             return
@@ -923,13 +1039,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/health":
-            self._send_json({
+            is_local = self._client_is_local()
+            dep = deployment_posture()
+            if not is_local:
+                dep = {k: dep.get(k) for k in
+                       ("runtime", "bind_scope", "network_mode", "auth")}
+            payload = {
                 "ok": True,
-                "hayabusa": str(HAYABUSA_BIN),
                 "version": self._hayabusa_version(),
-                "rules_dir": str(RULES_DIR),
-                "workspace": str(WORKSPACE),
-            })
+                "deployment": dep,
+            }
+            if is_local:
+                payload.update({
+                    "hayabusa": str(HAYABUSA_BIN),
+                    "rules_dir": str(RULES_DIR),
+                    "workspace": str(WORKSPACE),
+                })
+            self._send_json(payload)
             return
 
         if path == "/api/workspace":
@@ -957,7 +1083,13 @@ class Handler(BaseHTTPRequestHandler):
             with JOBS_LOCK:
                 for jid, j in JOBS.items():
                     if jid not in seen:
-                        out.append(j.to_dict())
+                        d = j.to_dict()
+                        if d.get("case_id") and not d.get("case_name"):
+                            case = STORE.get_case(d["case_id"])
+                            if case:
+                                d["case_name"] = case.get("name")
+                                d["case_reference"] = case.get("reference")
+                        out.append(d)
             out.sort(key=lambda j: j.get("started_at") or 0, reverse=True)
             self._send_json(out)
             return
@@ -989,6 +1121,11 @@ class Handler(BaseHTTPRequestHandler):
             job_view = job.to_dict() if job else dict(row)
             if not job:
                 job_view["args"] = json.loads(job_view.pop("args_json") or "[]")
+            if job_view.get("case_id") and not job_view.get("case_name"):
+                case = STORE.get_case(job_view["case_id"])
+                if case:
+                    job_view["case_name"] = case.get("name")
+                    job_view["case_reference"] = case.get("reference")
             stderr_path = JOBS_DIR / jid / "stderr.log"
             stdout_path = JOBS_DIR / jid / "stdout.log"
             summary_path = JOBS_DIR / jid / "summary.html"
@@ -1004,7 +1141,15 @@ class Handler(BaseHTTPRequestHandler):
 
         m = re.match(r"^/api/jobs/([A-Za-z0-9_-]{6,64})/stream$", path)
         if m:
-            job = JOBS.get(m.group(1))
+            jid = m.group(1)
+            if NETWORK_MODE and not self._client_is_local():
+                supplied = parse_qs(u.query).get("token", [""])[0]
+                with JOBS_LOCK:
+                    expected = PUBLIC_JOB_TOKENS.get(jid, "")
+                if not expected or not hmac.compare_digest(supplied, expected):
+                    self._send_json({"error": "forbidden"}, 403)
+                    return
+            job = JOBS.get(jid)
             if not job:
                 self._send_json({"error": "not_found"}, 404)
                 return
@@ -1097,14 +1242,60 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/config":
             # Lightweight flags the SPA reads on load to adapt its UI.
+            is_local = self._client_is_local()
+            dep = deployment_posture()
+            if not is_local:
+                # Do not publish hostnames, data-root paths, audit paths or
+                # actor labels to anonymous LAN visitors.
+                dep = {k: dep.get(k) for k in
+                       ("runtime", "bind_scope", "network_mode", "auth")}
             self._send_json({
                 "network_mode": NETWORK_MODE,   # published "danger ranking" site
                 "platform": sys.platform,
-                "live_supported": (sys.platform == "win32" and not NETWORK_MODE),
                 # True only for the operator (loopback). The SPA reveals the
                 # "mark safe" controls for this client even in public mode.
-                "is_admin": self._client_is_local(),
+                "is_admin": is_local,
+                "deployment": dep,
             })
+            return
+
+        if path == "/api/cases":
+            self._send_json({"cases": STORE.list_cases()})
+            return
+
+        m = re.match(r"^/api/cases/(case_[A-Za-z0-9]+)$", path)
+        if m:
+            cid = m.group(1)
+            case = STORE.get_case(cid)
+            if not case:
+                self._send_json({"error": "not_found"}, 404)
+                return
+            jobs = []
+            for row in STORE.list_jobs():
+                d = dict(row)
+                d["args"] = json.loads(d.pop("args_json") or "[]")
+                if d.get("case_id") == cid:
+                    jobs.append(d)
+            self._send_json({
+                "case": case,
+                "jobs": jobs,
+                "evidence": STORE.list_evidence(case_id=cid, limit=1000),
+                "audit": AUDIT.tail(limit=500, case_id=cid),
+            })
+            return
+
+        if path == "/api/audit":
+            qs = parse_qs(u.query)
+            limit = min(int(qs.get("limit", ["200"])[0] or 200), 2000)
+            self._send_json({
+                "entries": AUDIT.tail(limit),
+                "count": AUDIT.count(),
+                "path": str(AUDIT.path),
+            })
+            return
+
+        if path == "/api/audit/verify":
+            self._send_json(AUDIT.verify())
             return
 
         if path == "/api/collector":
@@ -1170,6 +1361,101 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, 500)
                 return
             self._send_json({"jobs": jobs})
+            return
+
+        m = re.match(r"^/api/hosts/([^/]+)/relationship_jobs$", path)
+        if m:
+            computer = unquote(m.group(1))
+            qs = parse_qs(u.query)
+            inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
+            try:
+                jobs = STORE.relationship_capable_jobs(computer,
+                                                       include_suppressed=inc)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json({"jobs": jobs})
+            return
+
+        m = re.match(r"^/api/hosts/([^/]+)/relationship_graph$", path)
+        if m:
+            computer = unquote(m.group(1))
+            qs = parse_qs(u.query)
+            inc = qs.get("include_suppressed", ["0"])[0] in ("1", "true", "yes")
+            jid = qs.get("job", [""])[0] or None
+            mode = (qs.get("mode", ["detections"])[0] or "detections").lower()
+            if mode not in ("detections", "all"):
+                mode = "detections"
+            try:
+                if mode == "all":
+                    if not jid:
+                        self._send_json({"error": "ログ全体モードでは対象ファイル（ジョブ）を選択してください。"}, 400)
+                        return
+                    row = STORE.get_job(jid)
+                    if not row:
+                        self._send_json({"error": "対象ジョブが見つかりません。"}, 404)
+                        return
+                    ev_path = row["evidence_path"] or ""
+                    if not ev_path:
+                        self._send_json({"error": "このジョブには証跡パスが記録されていません。再スキャンしてください。"}, 400)
+                        return
+                    raw = _extras.collect_graph_events(
+                        EXTRAS_CTX, ev_path, computer)
+                    graph = _relationship_graph.build_graph_from_events(
+                        computer, raw.get("events") or [],
+                        job_id=jid, mode="all")
+                    graph["truncated"] = bool(raw.get("truncated"))
+                    graph["source"] = raw.get("source")
+                    graph["read_errors"] = raw.get("errors") or []
+                    if not graph.get("present"):
+                        graph["present"] = raw.get("present") or []
+                else:
+                    graph = _relationship_graph.build_graph(
+                        STORE, computer, job_id=jid,
+                        include_suppressed=inc)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json(graph)
+            return
+
+        m = re.match(r"^/api/graph/relationship_graph$", path)
+        if m:
+            qs = parse_qs(u.query)
+            jid = qs.get("job", [""])[0] or None
+            computer = (qs.get("computer", [""])[0] or "").strip()
+            if not jid:
+                self._send_json({"error": "対象ファイル（ジョブ）を選択してください。"}, 400)
+                return
+            row = STORE.get_job(jid)
+            if not row:
+                self._send_json({"error": "対象ジョブが見つかりません。"}, 404)
+                return
+            ev_path = row["evidence_path"] or ""
+            if not ev_path:
+                self._send_json({"error": "このジョブには証跡パスが記録されていません。再スキャンしてください。"}, 400)
+                return
+            try:
+                raw = _extras.collect_graph_events(
+                    EXTRAS_CTX, ev_path, computer)
+                graph = _relationship_graph.build_graph_from_events(
+                    computer, raw.get("events") or [],
+                    job_id=jid, mode="all")
+                graph["truncated"] = bool(raw.get("truncated"))
+                graph["source"] = raw.get("source")
+                graph["read_errors"] = raw.get("errors") or []
+                if not graph.get("present"):
+                    graph["present"] = raw.get("present") or []
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, 500)
+                return
+            self._send_json(graph)
             return
 
         m = re.match(r"^/api/hosts/([^/]+)/process_tree$", path)
@@ -1327,21 +1613,6 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
-        if path == "/api/system/info":
-            channels = _list_system_channels()
-            total = sum((c.get("size") or 0) for c in channels if c.get("readable"))
-            unreadable = sum(1 for c in channels if not c.get("readable"))
-            self._send_json({
-                "platform": sys.platform,
-                "evtx_root": str(SYSTEM_EVTX_ROOT),
-                "admin": _is_admin_windows(),
-                "channels": channels,
-                "total_size": total,
-                "unreadable_count": unreadable,
-                "snapshot_dir": str(SYSTEM_SNAPSHOT_DIR.relative_to(WORKSPACE)).replace("\\", "/"),
-            })
-            return
-
         if path == "/api/lookups":
             # We can't reach into the forked engine's in-memory table
             # registry from out of process, so we reconstruct the
@@ -1491,6 +1762,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(out)
             return
 
+        # Optional extras (raw log search / Elastic bridge). Kept in a
+        # separate module so this dispatcher stays navigable.
+        if _extras.handle_get(self, path, u.query, EXTRAS_CTX):
+            return
+
         self._send_text("not found", 404)
 
     def do_DELETE(self):  # noqa: N802
@@ -1501,6 +1777,8 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             sid = int(m.group(1))
             if STORE.remove_suppression(sid):
+                audit("suppression.delete", object_type="suppression",
+                      object_id=str(sid))
                 self._send_json({"deleted": sid})
             else:
                 self._send_json({"error": "not_found"}, 404)
@@ -1521,6 +1799,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "not_found"}, 404)
                 return
             removed = purge_job(jid)
+            audit("job.delete", object_type="job", object_id=jid,
+                  detail={"detections_removed": removed})
             self._send_json({"deleted": jid, "detections_removed": removed})
             return
 
@@ -1541,6 +1821,30 @@ class Handler(BaseHTTPRequestHandler):
                 {"error": f"リクエストが大きすぎます ({clen} > {body_limit} bytes)"}, 413)
             return
 
+        if _extras.handle_post(self, path, EXTRAS_CTX):
+            return
+
+        if path == "/api/cases":
+            try:
+                params = self._read_json()
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
+            try:
+                case = STORE.get_or_create_case(
+                    params.get("name") or "",
+                    reference=params.get("reference"),
+                    description=params.get("description"),
+                    created_by=_audit.AuditLog.actor_default())
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
+            audit("case.open", object_type="case", object_id=case["id"],
+                  detail={"case_id": case["id"], "name": case.get("name"),
+                          "reference": case.get("reference")})
+            self._send_json({"case": case}, 201)
+            return
+
         if path == "/api/scan":
             # Cap concurrent scans so a flood of requests can't spawn unbounded
             # hayabusa subprocesses and exhaust the host.
@@ -1558,14 +1862,51 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, 400)
                 return
             job = Job("scan", [])
+            # Optional case/matter. A name is enough for the common workflow;
+            # the console creates the case on first use and reuses it later.
+            try:
+                if (params.get("case_name") or "").strip():
+                    case = STORE.get_or_create_case(
+                        params["case_name"],
+                        reference=params.get("case_reference"),
+                        description=params.get("case_description"),
+                        created_by=_audit.AuditLog.actor_default())
+                    job.case_id = case["id"]
+                elif (params.get("case_id") or "").strip():
+                    case = STORE.get_case(params["case_id"].strip())
+                    if case:
+                        job.case_id = case["id"]
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
             register_job(job)
+            if job.case_id:
+                STORE.set_job_case(job.id, job.case_id)
+            target = params.get("target", {})
+            tpath = (target.get("path") or "").strip()
+            if tpath:
+                if job.case_id:
+                    STORE.link_unassigned_evidence(job.case_id, tpath)
+                # Keep the custody ledger attached to the scan even when the
+                # case was selected at upload time or no case was used.
+                linked = STORE.link_evidence_to_job(job.id, tpath, job.case_id)
+                if linked:
+                    audit("evidence.link", object_type="job", object_id=job.id,
+                          detail={"case_id": job.case_id, "path": tpath,
+                                  "evidence_rows": linked})
             # Public-mode leaderboard label (team / nickname), optional.
             try:
                 STORE.set_label(job.id, params.get("nickname") or "")
             except Exception:  # noqa: BLE001
                 pass
+            audit("scan.requested", object_type="job", object_id=job.id,
+                  detail={"case_id": job.case_id, "target": params.get("target", {})})
+            job_token = secrets.token_urlsafe(32) if NETWORK_MODE else ""
+            with JOBS_LOCK:
+                PUBLIC_JOB_TOKENS[job.id] = job_token
             threading.Thread(target=run_job, args=(job, params), daemon=True).start()
-            self._send_json({"job_id": job.id}, 202)
+            self._send_json({"job_id": job.id, "case_id": job.case_id,
+                             "job_token": job_token}, 202)
             return
 
         m = re.match(r"^/api/jobs/([A-Za-z0-9_-]{6,64})/cancel$", path)
@@ -1600,6 +1941,8 @@ class Handler(BaseHTTPRequestHandler):
                     shutil.rmtree(child, ignore_errors=True)
             with JOBS_LOCK:
                 JOBS.clear()
+            audit("jobs.clear", object_type="workspace",
+                  detail={"removed": report})
             self._send_json({"cleared": True, **report})
             return
 
@@ -1623,6 +1966,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, 400)
                 return
+            audit("suppression.create", object_type="suppression",
+                  object_id=str(sid), detail={
+                      "rule_id": params.get("rule_id"),
+                      "computer": params.get("computer"),
+                      "reason": params.get("reason"),
+                  })
             self._send_json({"id": sid}, 201)
             return
 
@@ -1642,54 +1991,6 @@ class Handler(BaseHTTPRequestHandler):
                                  "fail": sum(1 for r in results if r.get("error"))})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, 500)
-            return
-
-        if path == "/api/system/import":
-            # Copy the selected system EVTX channels into
-            # workspace/uploads/system-snapshot/. Two reasons we do this
-            # rather than scanning System32 in place:
-            #   * the analyst can re-run scans against the same point-in-time
-            #     snapshot without re-elevating each time;
-            #   * Hayabusa locks files briefly during scan, and we never
-            #     want to hand it a path inside C:\Windows\System32.
-            try:
-                params = self._read_json()
-            except ValueError as exc:
-                self._send_json({"error": str(exc)}, 400)
-                return
-            names = params.get("channels") or []
-            if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-                self._send_json({"error": "channels must be a list of strings"}, 400)
-                return
-            if not names:
-                self._send_json({"error": "no channels selected"}, 400)
-                return
-            SYSTEM_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-            saved, errors = [], []
-            for fname in names:
-                # Defensive: file name only, no traversal, only known suffix.
-                if "/" in fname or "\\" in fname or ".." in fname:
-                    errors.append({"name": fname, "error": "invalid name"})
-                    continue
-                if not fname.lower().endswith(".evtx"):
-                    errors.append({"name": fname, "error": "not an .evtx file"})
-                    continue
-                src = SYSTEM_EVTX_ROOT / fname
-                if not src.exists():
-                    errors.append({"name": fname, "error": "not found"})
-                    continue
-                dst = SYSTEM_SNAPSHOT_DIR / fname
-                try:
-                    shutil.copy2(src, dst)
-                    saved.append({
-                        "name": fname,
-                        "size": dst.stat().st_size,
-                        "rel": str(dst.relative_to(WORKSPACE)).replace("\\", "/"),
-                    })
-                except OSError as exc:
-                    errors.append({"name": fname, "error": str(exc)})
-            self._send_json({"saved": saved, "errors": errors,
-                             "snapshot_dir": str(SYSTEM_SNAPSHOT_DIR.relative_to(WORKSPACE)).replace("\\", "/")})
             return
 
         m = re.match(r"^/api/detections/([A-Za-z0-9_-]{6,64})/(\d+)/feedback$", path)
@@ -1766,7 +2067,14 @@ class Handler(BaseHTTPRequestHandler):
                         if not line:
                             break
                         if line.startswith("level:"):
-                            level = line.split(":", 1)[1].strip()
+                            # Sigma rules occasionally carry an inline YAML
+                            # comment (`level: low  # should be high ...`).
+                            # Strip it so buckets stay canonical.
+                            raw = line.split(":", 1)[1].split("#", 1)[0]
+                            level = raw.strip().strip("'\"").lower()
+                            if level not in ("critical", "high", "medium",
+                                             "low", "informational"):
+                                level = "unknown"
                             break
             except OSError:
                 pass
@@ -1891,6 +2199,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         parts = body.split(boundary)
         saved = []
+        fields: dict[str, str] = {}
+        pending_evidence: list[dict] = []
         for part in parts:
             if not part or part in (b"--\r\n", b"--"):
                 continue
@@ -1904,6 +2214,12 @@ class Handler(BaseHTTPRequestHandler):
             head_text = head.decode("utf-8", "replace")
             fn_match = re.search(r'filename="([^"]+)"', head_text)
             if not fn_match:
+                # Non-file form fields (case_name / case_id).
+                name_match = re.search(r'name="([^"]+)"', head_text)
+                if name_match:
+                    value = payload.decode("utf-8", "replace").strip()
+                    if value:
+                        fields[name_match.group(1)] = value[:200]
                 continue
             filename = os.path.basename(unquote(fn_match.group(1)))
             if not filename or not re.match(r"^[A-Za-z0-9._\-]+$", filename):
@@ -1926,6 +2242,7 @@ class Handler(BaseHTTPRequestHandler):
             target = UPLOAD_DIR / filename
             with open(target, "wb") as f:
                 f.write(payload)
+            digest = hashlib.sha256(payload).hexdigest()
 
             # A .zip (e.g. the output of collect_windows_logs.bat) is unpacked
             # into a folder of .evtx and offered as a single directory target,
@@ -1946,17 +2263,63 @@ class Handler(BaseHTTPRequestHandler):
                     except OSError:
                         pass
                     continue
+                rel = str(ddir.relative_to(WORKSPACE)).replace("\\", "/")
                 saved.append({
                     "name": ddir.name, "kind": "dir", "count": len(names),
-                    "rel": str(ddir.relative_to(WORKSPACE)).replace("\\", "/"),
+                    "rel": rel, "sha256": digest, "size": len(payload),
+                })
+                pending_evidence.append({
+                    "filename": filename, "rel_path": rel, "sha256": digest,
+                    "size": len(payload), "files": len(names),
+                    "source": "upload-zip",
                 })
             else:
+                rel = str(target.relative_to(WORKSPACE)).replace("\\", "/")
                 saved.append({"name": filename, "size": len(payload),
-                              "rel": str(target.relative_to(WORKSPACE)).replace("\\", "/")})
+                              "rel": rel, "sha256": digest})
+                pending_evidence.append({
+                    "filename": filename, "rel_path": rel, "sha256": digest,
+                    "size": len(payload), "files": 1, "source": "upload",
+                })
         if not saved:
             self._send_json({"error": "no file part found"}, 400)
             return
-        self._send_json({"saved": saved})
+
+        # Record every accepted upload in the evidence ledger, even when no
+        # case was selected yet. The scan endpoint links it to a case by path.
+        case = None
+        try:
+            if fields.get("case_name"):
+                case = STORE.get_or_create_case(
+                    fields["case_name"],
+                    reference=fields.get("case_reference"),
+                    created_by=_audit.AuditLog.actor_default())
+            elif fields.get("case_id"):
+                case = STORE.get_case(fields["case_id"])
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f"[upload] case attach failed: {exc}\n")
+        for item in pending_evidence:
+            try:
+                e = STORE.add_evidence(
+                    filename=item["filename"], rel_path=item["rel_path"],
+                    sha256=item["sha256"], size=item["size"],
+                    files=item["files"], source=item["source"],
+                    case_id=case["id"] if case else None)
+                item["evidence_id"] = e["id"]
+                audit("evidence.upload", object_type="evidence", object_id=e["id"],
+                      detail={"case_id": e.get("case_id"),
+                              "filename": item["filename"],
+                              "sha256": item["sha256"], "bytes": item["size"]})
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(f"[upload] evidence ledger failed: {exc}\n")
+        for item in saved:
+            ev = next((p for p in pending_evidence
+                       if p["rel_path"] == item.get("rel")), None)
+            if ev:
+                item["sha256"] = ev["sha256"]
+                item["evidence_id"] = ev.get("evidence_id")
+        self._send_json({"saved": saved,
+                         "case_id": case["id"] if case else None})
 
     # Caps to keep a malicious/huge archive from filling the disk.
     _ZIP_MAX_FILES = 100
@@ -2102,10 +2465,13 @@ def main():
     port, fell_back = pick_port(preferred)
     host = BIND_HOST
 
-    print(f"\n  Hayabusa GUI")
+    print(f"\n  Hayabusa DFIR console")
+    print(f"  Runtime: {_runtime_name()}  ({sys.platform})")
     print(f"  Binary : {HAYABUSA_BIN}")
     print(f"  Rules  : {RULES_DIR}")
+    print(f"  Data   : {WORKSPACE}")
     print(f"  DB     : {DB_PATH}")
+    print(f"  Audit  : {AUDIT.path}  ({AUDIT.count()} entries)")
 
     if fell_back:
         # The most common cause of "browser shows the OLD server" is a
@@ -2127,7 +2493,8 @@ def main():
         url = f"http://{disp}:{port}"
         print(f"  Bind   : {host}:{port}  (all interfaces)")
         print(f"  Access : {url}   ← この URL を LAN の他 PC に共有")
-        print(f"  [WARN] 公開モード: 認証なし。誰でもアップロード/スキャン/削除が可能です。")
+        print(f"  [WARN] 公開モード: 認証なし。LAN からはアップロード/スキャン/ランキングのみ。")
+        print(f"  [WARN] ケース・証跡・監査ログ・ジョブ一覧は loopback (解析ホスト) 限定です。")
         print(f"  [WARN] 信頼できる LAN 内でのみ使用してください (インターネットに晒さない)。")
     else:
         url = f"http://{host}:{port}"

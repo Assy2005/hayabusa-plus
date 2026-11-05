@@ -1,0 +1,35 @@
+title: WMI Event Filter To Consumer Binding Created
+id: wmi-persistence-binding
+status: experimental
+description: |
+  Detects creation of a WMI __FilterToConsumerBinding (event 5861). Binding
+  an event filter to a consumer is the final step in WMI event-subscription
+  persistence. The rule filters common enterprise management consumers;
+  validate any remaining binding against the endpoint-management baseline.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1546/003/
+  - https://www.fireeye.com/blog/threat-research/2019/08/wmi-event-subscription-malicious-purposes.html
+logsource:
+  product: windows
+  service: wmi-activity
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-WMI-Activity/Operational'
+    EventID: 5861
+  filter_known_admin_tools:
+    Message|contains:
+      - 'ConfigMgr'
+      - 'ccmexec.exe'
+      - 'CarbonBlack'
+      - 'CrowdStrike'
+  condition: selection and not filter_known_admin_tools
+falsepositives:
+  - Endpoint-management agents that register WMI consumers (extend the filter list).
+  - Software inventory or monitoring products using WMI event subscriptions.
+level: high
+tags:
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1546.003

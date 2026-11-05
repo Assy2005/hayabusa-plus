@@ -1,0 +1,23 @@
+title: Windows Defender Malware Detection
+id: hayfx-defender-detection
+status: experimental
+description: Surfaces Windows Defender detection and action events (1116/1117) for triage.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://learn.microsoft.com/en-us/defender-endpoint/troubleshoot-microsoft-defender-antivirus
+logsource:
+  product: windows
+  service: windefend
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Windows Defender/Operational'
+    EventID:
+      - 1116
+      - 1117
+  condition: selection
+falsepositives:
+  - Security testing and legitimate detection events.
+level: high
+tags:
+  - attack.execution

@@ -33,6 +33,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -67,8 +68,46 @@ CREATE TABLE IF NOT EXISTS jobs (
   finished_at     REAL,
   args_json       TEXT,
   detection_count INTEGER NOT NULL DEFAULT 0,
-  indexed_lines   INTEGER NOT NULL DEFAULT 0
+  indexed_lines   INTEGER NOT NULL DEFAULT 0,
+  case_id         TEXT,
+  evidence_kind   TEXT,
+  evidence_path   TEXT,
+  evidence_sha256 TEXT,
+  evidence_bytes  INTEGER,
+  evidence_files  INTEGER,
+  evidence_hashed_at REAL
 );
+
+-- Case / matter separation. One case can own many jobs and evidence items.
+CREATE TABLE IF NOT EXISTS cases (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  reference   TEXT,
+  description TEXT,
+  status      TEXT NOT NULL DEFAULT 'open',
+  created_at  REAL NOT NULL,
+  updated_at  REAL NOT NULL,
+  created_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cases_updated ON cases(updated_at);
+
+-- Upload / acquisition ledger. Evidence rows survive job deletion so the
+-- chain of custody is not silently destroyed when an index is rebuilt.
+CREATE TABLE IF NOT EXISTS evidence (
+  id         TEXT PRIMARY KEY,
+  case_id    TEXT,
+  job_id     TEXT,
+  filename   TEXT NOT NULL,
+  rel_path   TEXT,
+  sha256     TEXT,
+  size       INTEGER,
+  files      INTEGER,
+  source     TEXT,
+  note       TEXT,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_case ON evidence(case_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_job  ON evidence(job_id);
 
 CREATE TABLE IF NOT EXISTS detections (
   job_id     TEXT NOT NULL,
@@ -134,10 +173,17 @@ CREATE TABLE IF NOT EXISTS labels (
 class Store:
     """Thin wrapper around a SQLite file with per-thread connections."""
 
-    def __init__(self, db_path: Path, fp_history_dir: Path):
+    def __init__(self, db_path: Path, fp_history_dir: Path,
+                 suppressions_dir: Path | None = None):
         self.db_path = db_path
         self.fp_history_dir = fp_history_dir
         self.fp_history_dir.mkdir(parents=True, exist_ok=True)
+        # Keep suppressions next to the repository by default. The previous
+        # `db_path.parent.parent` derivation breaks as soon as the data root
+        # is moved to a dedicated evidence disk, so callers can pass it in.
+        self.suppressions_dir = (suppressions_dir
+                                 or db_path.parent.parent / "suppressions")
+        self.suppressions_dir.mkdir(parents=True, exist_ok=True)
         self._tls = threading.local()
         self._init_lock = threading.Lock()
         self._init_schema()
@@ -162,12 +208,32 @@ class Store:
             conn = self._conn()
             with conn:
                 conn.executescript(SCHEMA)
+                # SQLite has no `ADD COLUMN IF NOT EXISTS`; migrate older
+                # databases in place so an upgrade never drops scan history.
+                self._ensure_columns(conn, "jobs", {
+                    "case_id": "TEXT",
+                    "evidence_kind": "TEXT",
+                    "evidence_path": "TEXT",
+                    "evidence_sha256": "TEXT",
+                    "evidence_bytes": "INTEGER",
+                    "evidence_files": "INTEGER",
+                    "evidence_hashed_at": "REAL",
+                })
             # One-shot data fix-up: align any rows inserted by older builds
             # that stored Hayabusa's abbreviated level values. Idempotent.
             for short, full in (("crit", "critical"), ("med", "medium"),
                                 ("info", "informational")):
                 conn.execute("UPDATE detections SET level=? WHERE level=?",
                              (full, short))
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection, table: str,
+                        columns: dict[str, str]):
+        existing = {row["name"] for row in
+                    conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     @contextlib.contextmanager
     def transaction(self):
@@ -186,23 +252,41 @@ class Store:
         c = self._conn()
         c.execute(
             "INSERT INTO jobs(id, kind, status, exit_code, started_at, "
-            "finished_at, args_json, detection_count, indexed_lines) "
-            "VALUES(?,?,?,?,?,?,?,?,COALESCE((SELECT indexed_lines FROM jobs WHERE id=?), 0)) "
+            "finished_at, args_json, detection_count, indexed_lines, case_id, "
+            "evidence_kind, evidence_path, evidence_sha256, evidence_bytes, "
+            "evidence_files, evidence_hashed_at) "
+            "VALUES(?,?,?,?,?,?,?,?,COALESCE((SELECT indexed_lines FROM jobs WHERE id=?), 0),"
+            "?,?,?,?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET "
             "  status=excluded.status, exit_code=excluded.exit_code, "
             "  finished_at=excluded.finished_at, args_json=excluded.args_json, "
-            "  detection_count=excluded.detection_count",
+            "  detection_count=excluded.detection_count, "
+            "  case_id=COALESCE(excluded.case_id, jobs.case_id), "
+            "  evidence_kind=COALESCE(excluded.evidence_kind, jobs.evidence_kind), "
+            "  evidence_path=COALESCE(excluded.evidence_path, jobs.evidence_path), "
+            "  evidence_sha256=COALESCE(excluded.evidence_sha256, jobs.evidence_sha256), "
+            "  evidence_bytes=COALESCE(excluded.evidence_bytes, jobs.evidence_bytes), "
+            "  evidence_files=COALESCE(excluded.evidence_files, jobs.evidence_files), "
+            "  evidence_hashed_at=COALESCE(excluded.evidence_hashed_at, jobs.evidence_hashed_at)",
             (job["id"], job["kind"], job["status"], job.get("exit_code"),
              job["started_at"], job.get("finished_at"),
              json.dumps(job.get("args") or []), job.get("detection_count", 0),
-             job["id"]),
+             job["id"], job.get("case_id"), job.get("evidence_kind"),
+             job.get("evidence_path"), job.get("evidence_sha256"),
+             job.get("evidence_bytes"), job.get("evidence_files"),
+             job.get("evidence_hashed_at")),
         )
 
     def list_jobs(self) -> list[sqlite3.Row]:
         c = self._conn()
         return list(c.execute(
-            "SELECT id, kind, status, exit_code, started_at, finished_at, "
-            "args_json, detection_count FROM jobs ORDER BY started_at DESC"
+            "SELECT j.id, j.kind, j.status, j.exit_code, j.started_at, "
+            "       j.finished_at, j.args_json, j.detection_count, j.case_id, "
+            "       j.evidence_kind, j.evidence_path, j.evidence_sha256, "
+            "       j.evidence_bytes, j.evidence_files, j.evidence_hashed_at, "
+            "       c.name AS case_name, c.reference AS case_reference "
+            "FROM jobs j LEFT JOIN cases c ON c.id = j.case_id "
+            "ORDER BY j.started_at DESC"
         ))
 
     def get_job(self, job_id: str) -> sqlite3.Row | None:
@@ -232,6 +316,8 @@ class Store:
             n = c.execute("SELECT COUNT(*) AS n FROM detections WHERE job_id=?",
                           (job_id,)).fetchone()["n"]
             c.execute("DELETE FROM detections WHERE job_id=?", (job_id,))
+            # Evidence is a custody record: keep it, only unlink the job.
+            c.execute("UPDATE evidence SET job_id=NULL WHERE job_id=?", (job_id,))
             c.execute("DELETE FROM jobs WHERE id=?", (job_id,))
         return n
 
@@ -239,17 +325,150 @@ class Store:
         """Wipe all jobs + detections (and the derived rule_feedback view).
 
         Suppressions are intentionally preserved — they are analyst config,
-        not scan output, and round-trip through suppressions/*.json. Returns
-        a small report of how many rows were removed.
+        not scan output, and round-trip through suppressions/*.json. Cases,
+        evidence rows and the audit log are deliberately preserved: deleting
+        an analysis index must not erase who handled which evidence.
+        Returns a small report of how many rows were removed.
         """
         c = self._conn()
         with self.transaction():
             jobs = c.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()["n"]
             dets = c.execute("SELECT COUNT(*) AS n FROM detections").fetchone()["n"]
+            c.execute("UPDATE evidence SET job_id=NULL WHERE job_id IS NOT NULL")
             c.execute("DELETE FROM detections")
             c.execute("DELETE FROM jobs")
             c.execute("DELETE FROM rule_feedback")
         return {"jobs": jobs, "detections": dets}
+
+    # --------------------------------------------------------- cases/evidence
+
+    def get_or_create_case(self, name: str, *, reference: str | None = None,
+                           description: str | None = None,
+                           created_by: str | None = None) -> dict:
+        """Return an existing open case by exact name, or create a new one."""
+        clean = re.sub(r"\s+", " ", (name or "")).strip()[:120]
+        if not clean:
+            raise ValueError("case name is required")
+        c = self._conn()
+        row = c.execute(
+            "SELECT * FROM cases WHERE name=? AND status='open' "
+            "ORDER BY created_at DESC LIMIT 1", (clean,)).fetchone()
+        if row:
+            return dict(row)
+        now = time.time()
+        cid = "case_" + uuid.uuid4().hex[:12]
+        with self.transaction():
+            c.execute(
+                "INSERT INTO cases(id, name, reference, description, status, "
+                "created_at, updated_at, created_by) VALUES(?,?,?,?,?,?,?,?)",
+                (cid, clean, (reference or "").strip()[:120] or None,
+                 (description or "").strip()[:2000] or None, "open",
+                 now, now, (created_by or "local-analyst")[:80]))
+        return dict(c.execute("SELECT * FROM cases WHERE id=?", (cid,)).fetchone())
+
+    def get_case(self, case_id: str) -> dict | None:
+        row = self._conn().execute(
+            "SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_cases(self) -> list[dict]:
+        rows = self._conn().execute(
+            "SELECT c.*, "
+            "  (SELECT COUNT(*) FROM jobs j WHERE j.case_id=c.id) AS job_count, "
+            "  (SELECT COALESCE(SUM(j.detection_count),0) FROM jobs j "
+            "     WHERE j.case_id=c.id) AS detection_count, "
+            "  (SELECT COUNT(*) FROM evidence e WHERE e.case_id=c.id) AS evidence_count "
+            "FROM cases c ORDER BY c.updated_at DESC, c.created_at DESC"
+        )
+        return [dict(r) for r in rows]
+
+    def set_job_case(self, job_id: str, case_id: str):
+        now = time.time()
+        c = self._conn()
+        with self.transaction():
+            c.execute("UPDATE jobs SET case_id=? WHERE id=?", (case_id, job_id))
+            c.execute("UPDATE cases SET updated_at=? WHERE id=?", (now, case_id))
+
+    def set_job_evidence(self, job_id: str, *, kind: str, path: str,
+                         sha256: str | None, size: int | None,
+                         files: int | None = None,
+                         hashed_at: float | None = None):
+        c = self._conn()
+        c.execute(
+            "UPDATE jobs SET evidence_kind=?, evidence_path=?, evidence_sha256=?, "
+            "evidence_bytes=?, evidence_files=?, evidence_hashed_at=? WHERE id=?",
+            (kind, path, sha256, size, files, hashed_at or time.time(), job_id))
+
+    def add_evidence(self, *, filename: str, rel_path: str | None = None,
+                     sha256: str | None = None, size: int | None = None,
+                     files: int | None = None, case_id: str | None = None,
+                     job_id: str | None = None, source: str = "upload",
+                     note: str | None = None) -> dict:
+        eid = "ev_" + uuid.uuid4().hex[:12]
+        now = time.time()
+        c = self._conn()
+        with self.transaction():
+            c.execute(
+                "INSERT INTO evidence(id, case_id, job_id, filename, rel_path, "
+                "sha256, size, files, source, note, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (eid, case_id, job_id, filename[:500], rel_path, sha256, size,
+                 files, source, note, now))
+            if case_id:
+                c.execute("UPDATE cases SET updated_at=? WHERE id=?", (now, case_id))
+        return dict(c.execute("SELECT * FROM evidence WHERE id=?", (eid,)).fetchone())
+
+    def list_evidence(self, *, case_id: str | None = None,
+                      job_id: str | None = None, limit: int = 500) -> list[dict]:
+        clauses, params = [], []
+        if case_id:
+            clauses.append("e.case_id=?"); params.append(case_id)
+        if job_id:
+            clauses.append("e.job_id=?"); params.append(job_id)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(max(1, min(int(limit or 500), 5000)))
+        rows = self._conn().execute(
+            "SELECT e.*, c.name AS case_name, c.reference AS case_reference "
+            "FROM evidence e LEFT JOIN cases c ON c.id=e.case_id" + where +
+            " ORDER BY e.created_at DESC LIMIT ?", params)
+        return [dict(r) for r in rows]
+
+    def link_unassigned_evidence(self, case_id: str, rel_path: str) -> int:
+        """Attach evidence uploaded before a case was selected to that case."""
+        c = self._conn()
+        with self.transaction():
+            cur = c.execute(
+                "UPDATE evidence SET case_id=? "
+                "WHERE case_id IS NULL AND (rel_path=? OR rel_path LIKE ?)",
+                (case_id, rel_path, rel_path.rstrip("/") + "/%"))
+            if cur.rowcount:
+                c.execute("UPDATE cases SET updated_at=? WHERE id=?",
+                          (time.time(), case_id))
+        return cur.rowcount or 0
+
+    def link_evidence_to_job(self, job_id: str, rel_path: str,
+                             case_id: str | None = None) -> int:
+        """Bind an uploaded evidence row to the scan that read it.
+
+        Case selection can happen at upload time or at scan time. This keeps
+        the custody ledger connected either way, without overwriting a case
+        that was explicitly chosen earlier.
+        """
+        if not rel_path:
+            return 0
+        c = self._conn()
+        with self.transaction():
+            cur = c.execute(
+                "UPDATE evidence SET job_id=?, "
+                "  case_id=COALESCE(case_id, ?) "
+                "WHERE (rel_path=? OR rel_path LIKE ?) "
+                "  AND (? IS NULL OR case_id IS NULL OR case_id=?)",
+                (job_id, case_id, rel_path, rel_path.rstrip("/") + "/%",
+                 case_id, case_id))
+            if cur.rowcount and case_id:
+                c.execute("UPDATE cases SET updated_at=? WHERE id=?",
+                          (time.time(), case_id))
+        return cur.rowcount or 0
 
     # ------------------------------------------------------------ detections
 
@@ -1371,14 +1590,47 @@ class Store:
             where += " AND s.id IS NULL"
         sql = (
             "SELECT d.job_id AS job_id, COUNT(*) AS n, "
-            "       MAX(j.started_at) AS started_at "
+            "       MAX(j.started_at) AS started_at, "
+            "       MAX(j.evidence_path) AS evidence_path "
             f"FROM detections d{join} "
             "JOIN jobs j ON j.id = d.job_id "
             f"{where} "
             "GROUP BY d.job_id HAVING n > 0 "
             "ORDER BY started_at DESC")
         return [{"job_id": r["job_id"], "count": r["n"],
-                 "started_at": r["started_at"]}
+                 "started_at": r["started_at"],
+                 "evidence_path": r["evidence_path"]}
+                for r in c.execute(sql, params)]
+
+    def relationship_capable_jobs(self, computer: str,
+                                  include_suppressed: bool = False) -> list[dict]:
+        """Jobs that contain process-create or file-create events for a host.
+
+        The relationship graph also uses Sysmon EID 11/15, so this is broader
+        than process_capable_jobs. The count is the number of relevant events
+        in that job for the selected host.
+        """
+        c = self._conn()
+        where = ("WHERE d.computer = ? AND ("
+                 "(d.event_id IN ('1','11','15') "
+                 " AND d.channel LIKE '%Sysmon%') "
+                 "OR d.event_id = '4688')")
+        params: list = [computer]
+        join = self._SUPP_JOIN
+        if not include_suppressed:
+            where += " AND s.id IS NULL"
+        sql = (
+            "SELECT d.job_id AS job_id, COUNT(*) AS n, "
+            "       MAX(j.started_at) AS started_at, "
+            "       MAX(j.evidence_path) AS evidence_path "
+            f"FROM detections d{join} "
+            "JOIN jobs j ON j.id = d.job_id "
+            f"{where} "
+            "GROUP BY d.job_id HAVING n > 0 "
+            "ORDER BY started_at DESC")
+        return [{"job_id": r["job_id"], "count": r["n"],
+                 "started_at": r["started_at"],
+                 "evidence_path": r["evidence_path"]}
                 for r in c.execute(sql, params)]
 
     def attack_story(self, computer: str, include_suppressed: bool = False) -> dict:
@@ -1576,7 +1828,7 @@ class Store:
                                        a single hostname
         Source of truth remains SQLite; these files are export snapshots.
         """
-        out_dir = self.db_path.parent.parent / "suppressions"
+        out_dir = self.suppressions_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         buckets: dict[str, list[dict]] = {}
         for row in self.list_suppressions():
@@ -1625,7 +1877,7 @@ class Store:
         DB. Useful when the DB was wiped but the snapshot directory was
         checked into version control.
         """
-        snap_dir = self.db_path.parent.parent / "suppressions"
+        snap_dir = self.suppressions_dir
         if not snap_dir.exists():
             return 0
         imported = 0

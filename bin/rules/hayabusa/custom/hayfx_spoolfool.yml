@@ -1,0 +1,29 @@
+title: SpoolFool Print Spooler Privilege Escalation
+id: hayfx-spoolfool
+status: experimental
+description: Detects the SpoolFool tool and its copy of a DLL into the print spooler driver directory.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://github.com/ly4k/SpoolFool
+  - https://attack.mitre.org/techniques/T1068/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection_proc:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\SpoolFool.exe'
+  selection_file:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 11
+    TargetFilename|contains: '\spool\drivers\'
+    Image|endswith: '\SpoolFool.exe'
+  condition: selection_proc or selection_file
+falsepositives:
+  - Print driver installation utilities.
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.t1068

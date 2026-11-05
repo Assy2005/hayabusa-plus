@@ -1,0 +1,24 @@
+title: EventLog Service Crash Reporting
+id: hayfx-eventlog-service-crash
+status: experimental
+description: Detects WerFault launched by the EventLog service host, a sign of event-log service instability or tampering.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1562/002/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\WerFault.exe'
+    ParentCommandLine|contains: '-s EventLog'
+  condition: selection
+falsepositives:
+  - EventLog service crashes from faulty providers.
+level: medium
+tags:
+  - attack.defense_evasion
+  - attack.t1562.002

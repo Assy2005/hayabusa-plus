@@ -1,0 +1,24 @@
+title: MSSQL xp_cmdshell Configuration Change
+id: hayfx-mssql-xp-cmdshell
+status: experimental
+description: Detects enabling, disabling or failed execution of MSSQL xp_cmdshell.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1505/003/
+logsource:
+  product: windows
+  service: application
+detection:
+  selection:
+    Channel: 'Application'
+    EventID:
+      - 15457
+      - 15281
+  condition: selection
+falsepositives:
+  - Database administration scripts.
+level: high
+tags:
+  - attack.execution
+  - attack.t1505.003

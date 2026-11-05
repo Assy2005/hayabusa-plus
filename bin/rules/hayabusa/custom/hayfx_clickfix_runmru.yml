@@ -1,0 +1,60 @@
+title: ClickFix Run Dialog Command With Remote Retrieval
+id: hayfx-clickfix-runmru
+status: experimental
+description: |
+  Detects commands written to the Explorer RunMRU key that contain a URL,
+  encoded or hidden PowerShell, or a remote-fetch/execution primitive. The
+  Run dialog writes the literal command to HKCU\Software\Microsoft\Windows\
+  CurrentVersion\Explorer\RunMRU before execution, so this remains useful
+  even when the child process command line is encoded.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://www.sans.org/blog/stay-ahead-ransomware-initial-access-via-evolving-social-engineering
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_potential_clickfix_execution.yml
+  - https://www.trackr.live/2026/06/22/clickfix-runmru-detection-2026-variants/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection_runmru:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 13
+    TargetObject|contains: '\CurrentVersion\Explorer\RunMRU\'
+  selection_behavior:
+    Details|contains:
+      - 'http://'
+      - 'https://'
+      - '-encodedcommand'
+      - '-enc '
+      - ' -e '
+      - ' -w hidden'
+      - '-windowstyle hidden'
+      - 'Invoke-WebRequest'
+      - 'Invoke-RestMethod'
+      - 'FromBase64String'
+      - 'DownloadString'
+      - 'IEX'
+      - 'mshta http'
+      - 'mshta https'
+      - 'curl http'
+      - 'curl https'
+      - 'certutil -urlcache'
+      - 'certutil -split'
+      - 'bitsadmin /transfer'
+      - 'msiexec /i http'
+      - 'msiexec https'
+      - 'conhost --headless'
+      - 'pcalua'
+      - 'forfiles /p'
+      - 'rundll32 http'
+      - 'regsvr32 http'
+  condition: selection_runmru and selection_behavior
+falsepositives:
+  - Administrators or help-desk staff pasting a documented URL or maintenance command into Run.
+  - Software deployment scripts that retrieve a package through a native interpreter.
+level: high
+tags:
+  - attack.execution
+  - attack.t1204.004
+  - attack.t1059.001

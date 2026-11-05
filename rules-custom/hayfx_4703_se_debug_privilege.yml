@@ -1,0 +1,25 @@
+title: SeDebugPrivilege Enabled In User Process
+id: hayfx-4703-se-debug-privilege
+status: experimental
+description: Detects a process enabling SeDebugPrivilege, commonly used by credential-dumping and injection tools.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1134/001/
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    Channel: 'Security'
+    EventID: 4703
+    EnabledPrivilegeList|contains: 'SeDebugPrivilege'
+  filter_system:
+    SubjectUserName|endswith: '$'
+  condition: selection and not filter_system
+falsepositives:
+  - Debuggers and software development tools.
+level: medium
+tags:
+  - attack.privilege_escalation
+  - attack.t1134.001

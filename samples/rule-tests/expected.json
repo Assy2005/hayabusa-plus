@@ -1,0 +1,14 @@
+[
+  {"record_id": 1001, "rule_id": "hayfx-clickfix-runmru", "level": "high"},
+  {"record_id": 1002, "rule_id": "hayfx-clickfix-pcalua", "level": "high"},
+  {"record_id": 1003, "rule_id": "hayfx-clickfix-explorer-child", "level": "high"},
+  {"record_id": 1004, "rule_id": "hayfx-conhost-headless-shell", "level": "medium"},
+  {"record_id": 1005, "rule_id": "hayfx-rmm-suspicious-deployment", "level": "high"},
+  {"record_id": 1006, "rule_id": "hayfx-defender-exclusion-tamper", "level": "high"},
+  {"record_id": 1007, "rule_id": "hayfx-wmiexec-admin-share", "level": "high"},
+  {"record_id": 1008, "rule_id": "hayfx-rclone-exfil", "level": "medium"},
+  {"record_id": 1009, "rule_id": "hayfx-browser-credential-copy", "level": "medium"},
+  {"record_id": 1010, "rule_id": "hayfx-cloudflared-svchost-masquerade", "level": "high"},
+  {"record_id": 1011, "rule_id": "hayfx-byovd-driver-user-path", "level": "medium"},
+  {"record_id": 1012, "rule_id": "af-auditpol-reset", "level": "high"}
+]

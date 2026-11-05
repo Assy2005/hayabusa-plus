@@ -1,0 +1,34 @@
+title: Cloudflared Masquerading As Svchost
+id: hayfx-cloudflared-svchost-masquerade
+status: experimental
+description: |
+  Detects a cloudflared tunnel client renamed to svchost.exe. Attackers use
+  this to blend a reverse tunnel into the Windows service host process while
+  exposing RDP, SMB, or a C2 endpoint.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1036/
+  - https://attack.mitre.org/techniques/T1572/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 1
+    Image|endswith: '\svchost.exe'
+    CommandLine|contains:
+      - 'tunnel --url'
+      - 'tunnel run'
+      - '--no-autoupdate'
+      - '--token'
+  condition: selection
+falsepositives:
+  - A custom service wrapper or developer tool that passes tunnel-style arguments to a renamed binary.
+level: high
+tags:
+  - attack.command_and_control
+  - attack.defense_evasion
+  - attack.t1036
+  - attack.t1572

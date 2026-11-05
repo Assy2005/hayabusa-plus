@@ -1,0 +1,23 @@
+title: SMB Spooler Or Remote File Access
+id: hayfx-sysmon-smb-445
+status: experimental
+description: Detects SMB connections sourced from or directed to port 445, including spooler and remote file access.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1021/002/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID: 3
+    DestinationPort: 445
+  condition: selection
+falsepositives:
+  - Normal file sharing and domain operations.
+level: low
+tags:
+  - attack.lateral_movement
+  - attack.t1021.002

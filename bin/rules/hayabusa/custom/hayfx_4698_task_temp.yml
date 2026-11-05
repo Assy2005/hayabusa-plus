@@ -1,0 +1,31 @@
+title: Suspicious Scheduled Task Creation In Temp Directory
+id: hayfx-4698-task-temp
+status: experimental
+description: Detects scheduled tasks whose XML references Temp, cmd.exe, PowerShell or remote content.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1053/005/
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    Channel: 'Security'
+    EventID:
+      - 4698
+      - 4699
+    TaskContent|contains:
+      - '\Temp\'
+      - '%windir%\Temp'
+      - 'cmd.exe'
+      - 'powershell'
+      - 'http://'
+      - 'https://'
+  condition: selection
+falsepositives:
+  - Software installers and enterprise management tasks.
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1053.005

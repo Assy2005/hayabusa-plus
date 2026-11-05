@@ -1,0 +1,25 @@
+title: New SMB Share Created Via LanmanServer
+id: hayfx-sysmon-new-smb-share
+status: experimental
+description: Detects registry creation or value changes under the LanmanServer Shares key.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1021/002/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+    EventID:
+      - 12
+      - 13
+    TargetObject|contains: '\Services\LanmanServer\Shares\'
+  condition: selection
+falsepositives:
+  - Administrative share creation.
+level: medium
+tags:
+  - attack.lateral_movement
+  - attack.t1021.002

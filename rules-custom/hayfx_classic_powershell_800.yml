@@ -1,0 +1,22 @@
+title: Classic PowerShell Script Block Execution
+id: hayfx-classic-powershell-scriptblock
+status: experimental
+description: Detects classic Windows PowerShell 800 script block execution where newer 4104 logging is unavailable.
+author: hayabusa-fx
+date: 2026/11/05
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+logsource:
+  product: windows
+  service: powershell-classic
+detection:
+  selection:
+    Channel: 'Windows PowerShell'
+    EventID: 800
+  condition: selection
+falsepositives:
+  - Normal PowerShell activity on hosts without script block logging.
+level: low
+tags:
+  - attack.execution
+  - attack.t1059.001
