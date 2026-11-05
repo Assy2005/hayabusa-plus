@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-label="hayabusa-plus — DFIR analysis console">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0f15"/>
+      <stop offset="0.58" stop-color="#101923"/>
+      <stop offset="1" stop-color="#1b1110"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff754b"/>
+      <stop offset="0.5" stop-color="#df4b2a"/>
+      <stop offset="1" stop-color="#b73518"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.8" cy="0.1" r="0.8">
+      <stop offset="0" stop-color="#df4b2a" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#df4b2a" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M 34 0 L 0 0 0 34" fill="none" stroke="#ffffff" stroke-opacity="0.045" stroke-width="1"/>
+    </pattern>
+    <filter id="softglow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="340" rx="14" fill="url(#bg)"/>
+  <rect width="1200" height="340" rx="14" fill="url(#glow)"/>
+  <rect width="1200" height="340" rx="14" fill="url(#grid)"/>
+  <path d="M0 0H1200V4H0Z" fill="#df4b2a"/>
+
+  <!-- brand mark -->
+  <g transform="translate(58 54)">
+    <rect width="74" height="74" rx="8" fill="url(#mark)" filter="url(#softglow)"/>
+    <rect x="1" y="1" width="72" height="72" rx="7" fill="none" stroke="#ffffff" stroke-opacity="0.26"/>
+    <text x="37" y="51" text-anchor="middle" font-family="'Yu Mincho', 'Hiragino Mincho ProN', serif" font-size="40" fill="#ffffff">隼</text>
+  </g>
+
+  <g font-family="'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif">
+    <text x="154" y="76" font-family="'Cascadia Mono', Consolas, monospace" font-size="12" letter-spacing="4" fill="#ff916d">HAYABUSA-PLUS</text>
+    <text x="154" y="119" font-size="43" font-weight="600" letter-spacing="-1" fill="#f8fafc">DFIR analysis console</text>
+    <text x="154" y="154" font-size="16" fill="#b6c2cf">Upload evidence. Verify the hash. Read the whole incident.</text>
+    <text x="154" y="178" font-size="13" fill="#8493a2">隔離環境で、証跡を深く読む。Sigma / IoC / process graph / case &amp; audit.</text>
+  </g>
+
+  <g transform="translate(154 212)" font-family="'Cascadia Mono', Consolas, monospace" font-size="10" fill="#9eacba">
+    <rect width="122" height="24" rx="4" fill="#ffffff" fill-opacity="0.045" stroke="#ffffff" stroke-opacity="0.13"/>
+    <text x="12" y="16" fill="#e8eef5">LOCAL ONLY</text>
+    <rect x="134" width="132" height="24" rx="4" fill="#ffffff" fill-opacity="0.045" stroke="#ffffff" stroke-opacity="0.13"/>
+    <text x="146" y="16" fill="#e8eef5">UPLOAD-ONLY</text>
+    <rect x="278" width="148" height="24" rx="4" fill="#ffffff" fill-opacity="0.045" stroke="#ffffff" stroke-opacity="0.13"/>
+    <text x="290" y="16" fill="#e8eef5">HASH-CHAINED</text>
+  </g>
+
+  <!-- process graph motif -->
+  <g opacity="0.92">
+    <path d="M820 120 C870 120 875 86 920 86" fill="none" stroke="#ff754b" stroke-opacity="0.72" stroke-width="1.5"/>
+    <path d="M820 120 C872 120 880 170 930 170" fill="none" stroke="#8493a2" stroke-opacity="0.54" stroke-width="1.2"/>
+    <path d="M820 120 C870 138 900 240 952 240" fill="none" stroke="#8493a2" stroke-opacity="0.42" stroke-width="1.2"/>
+    <path d="M920 86 C972 86 990 62 1040 62" fill="none" stroke="#8493a2" stroke-opacity="0.42" stroke-width="1.2"/>
+
+    <g font-family="'Cascadia Mono', Consolas, monospace" font-size="10">
+      <rect x="748" y="104" width="72" height="32" rx="5" fill="#17212d" stroke="#ff754b" stroke-opacity="0.55"/>
+      <text x="762" y="124" fill="#f0f4f8">explorer</text>
+
+      <rect x="920" y="70" width="92" height="32" rx="5" fill="#17212d" stroke="#8493a2" stroke-opacity="0.42"/>
+      <text x="934" y="90" fill="#d8e0e8">powershell</text>
+
+      <rect x="930" y="154" width="82" height="32" rx="5" fill="#17212d" stroke="#8493a2" stroke-opacity="0.42"/>
+      <text x="944" y="174" fill="#d8e0e8">mshta</text>
+
+      <rect x="952" y="224" width="84" height="32" rx="5" fill="#17212d" stroke="#df4b2a" stroke-opacity="0.5"/>
+      <text x="966" y="244" fill="#f0f4f8">RunMRU</text>
+
+      <rect x="1040" y="46" width="92" height="32" rx="5" fill="#17212d" stroke="#8493a2" stroke-opacity="0.42"/>
+      <text x="1054" y="66" fill="#d8e0e8">stage2.ps1</text>
+    </g>
+    <circle cx="820" cy="120" r="4" fill="#ff754b"/>
+    <circle cx="920" cy="86" r="3" fill="#ff754b"/>
+    <circle cx="930" cy="170" r="3" fill="#8493a2"/>
+    <circle cx="952" cy="240" r="3" fill="#df4b2a"/>
+    <circle cx="1040" cy="62" r="3" fill="#8493a2"/>
+  </g>
+
+  <text x="58" y="318" font-family="'Cascadia Mono', Consolas, monospace" font-size="10" letter-spacing="1.5" fill="#667586">EVIDENCE → SHA-256 → SIGMA → GRAPH → CASE / AUDIT</text>
+  <text x="1142" y="318" text-anchor="end" font-family="'Cascadia Mono', Consolas, monospace" font-size="10" letter-spacing="1.5" fill="#667586">GPL-3.0 / NO PIP / NO NPM</text>
+</svg>

@@ -1,24 +1,55 @@
 <div align="center">
 
-# hayabusa-plus
+<img src="docs/images/readme-hero.svg" alt="hayabusa-plus — DFIR analysis console" width="100%" />
 
-**収集済み EVTX を隔離環境で深く読む、無料の DFIR コンソール**
+<br/><br/>
 
-Sigma 検知 / IoC 照合 / プロセス・ファイル関係図 / ケース・証跡管理 / 監査ログを、
-WSL2・Linux ミニ PC・オフライン環境で使えるようにした Hayabusa の拡張版です。
+[![status](https://img.shields.io/badge/status-active-2ea043?style=flat-square)](https://github.com/Assy2005/hayabusa-plus)
+[![python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![rust](https://img.shields.io/badge/rust-1.95-000000?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![platform](https://img.shields.io/badge/Proxmox%20%2F%20Linux-ready-4E9A06?style=flat-square&logo=linux&logoColor=white)](docs/INSTALL-LINUX.md)
+[![deps](https://img.shields.io/badge/pip%20%2F%20npm-zero-8957e5?style=flat-square)](https://github.com/Assy2005/hayabusa-plus)
+[![license](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](engine/LICENSE.txt)
 
-![status](https://img.shields.io/badge/status-active-success)
-![python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
-![rust](https://img.shields.io/badge/rust-1.95-000000?logo=rust&logoColor=white)
-![platform](https://img.shields.io/badge/platform-Linux%20%7C%20WSL2%20%7C%20Windows-4E9A06?logo=linux&logoColor=white)
-![license](https://img.shields.io/badge/license-GPL--3.0-blue)
-![fork](https://img.shields.io/badge/forked%20from-Yamato--Security%2Fhayabusa-orange)
+**収集済み EVTX を、隔離環境で深く読む。**<br/>
+Sigma 検知 / IoC / プロセス・ファイル関係図 / ケース・証跡・監査を、<br/>
+Linux・WSL2・オフライン環境で扱う無料の DFIR コンソールです。
 
-<br/>
-
-![ダッシュボード](docs/images/dashboard.png)
+[**クイックスタート**](#クイックスタートlinux--proxmox) ·
+[**検知ルール**](#同梱ルールの例) ·
+[**画面**](#画面イメージ) ·
+[**Linux 本番**](docs/INSTALL-LINUX.md) ·
+[**設計**](ARCHITECTURE.md)
 
 </div>
+
+<table align="center">
+<tr>
+<td align="center" width="25%"><h3>53</h3><sub>Sigma rules</sub></td>
+<td align="center" width="25%"><h3>269 / 278</h3><sub>sample coverage</sub></td>
+<td align="center" width="25%"><h3>12 / 0</h3><sub>positive / negative fixtures</sub></td>
+<td align="center" width="25%"><h3>0</h3><sub>pip / npm dependencies</sub></td>
+</tr>
+</table>
+
+> [!IMPORTANT]
+> **解析対象の端末では実行しないでください。**<br/>
+> 収集済みの EVTX / ZIP を解析ホストへ取り込み、SHA-256 を記録してから検査します。
+> 既定の待受は `127.0.0.1` のみで、認証はありません。LAN 公開は明示 opt-in です。
+
+---
+
+## 何を解決するか
+
+| 現場の課題 | hayabusa-plus のアプローチ |
+|---|---|
+| 侵害端末上で解析して証拠を汚す | 収集と解析を分離。WSL2 / Linux の専用ホストで実行 |
+| どの証跡を読んだか説明できない | 取り込み時とスキャン前に SHA-256 / manifest を記録 |
+| 案件が増えると結果が迷子になる | ケースにジョブ・証跡・判定・監査履歴を集約 |
+| 誰が何をしたか追えない | 追記専用・ハッシュチェーン監査ログ |
+| Hayabusa の結果が CSV / JSON の山になる | SQLite に正規化し、多軸検索・ピボット・日本語解説 |
+| Sigma 単体では攻撃の流れが見えない | プロセスツリー・関係図・時系列・振る舞い差分で補完 |
+| 商用 DFIR 製品は高価 | ケース・証跡・監査・レポートの縦線を無料で実装 |
 
 ---
 
@@ -108,6 +139,11 @@ negative: 0 unexpected new-rule detections
 
 OK: samples match expected detections
 ```
+
+> [!TIP]
+> GUI で確認する場合は `hayfx-2026-detections.evtx` をスキャンし、
+> 12イベント / 12検知になることを確認してください。詳細は
+> [samples/rule-tests/README.md](samples/rule-tests/README.md) にあります。
 
 ---
 
@@ -245,39 +281,51 @@ flowchart LR
 
 ## 画面イメージ
 
-### ホーム
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/home.png" alt="ホーム画面" width="100%" />
+<br/>
+<b>ホーム</b><br/>
+<sub>実行環境・証跡ハッシュ・認証状態と、解析までの流れ。</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/scan.png" alt="スキャン画面" width="100%" />
+<br/>
+<b>スキャン</b><br/>
+<sub>EVTX / ZIP の取り込み、プリセット、進捗、中止。</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/dashboard.png" alt="ダッシュボード" width="100%" />
+<br/>
+<b>ダッシュボード</b><br/>
+<sub>KPI、重要度、時系列、TOP ルール / ホスト。</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/hunt.png" alt="ハンティング" width="100%" />
+<br/>
+<b>ハンティング</b><br/>
+<sub>ホスト glob、期間、レベル、EID、自由文字列で検索。</sub>
+</td>
+</tr>
+</table>
 
-実行環境・証跡ハッシュ・認証状態を表示し、取り込みから調査までの流れを提示します。
-
-![ホーム画面](docs/images/home.png)
-
-### スキャン
-
-EVTX / ZIP の取り込み、案件名、プリセット、進捗、中止までを1画面で行います。
-
-![スキャン画面](docs/images/scan.png)
-
-### ダッシュボード
-
-KPI、重要度ドーナツ、時系列、TOP ルール / ホストを表示します。
-
-![ダッシュボード](docs/images/dashboard.png)
-
-### ホスト別ビュー
-
-重要度・TP/FP・新しさなどを加味したリスクスコアで端末を並べます。
-
-![ホスト別ビュー](docs/images/hosts.png)
-
-### ハンティング
-
-ホスト glob、期間、レベル、チャネル、EID、自由文字列で検知を絞り込みます。
-
-![ハント画面](docs/images/hunt.png)
+<p align="center">
+<img src="docs/images/hosts.png" alt="ホスト別ビュー" width="82%" />
+<br/>
+<sub><b>ホスト別ビュー</b> — 重要度・TP/FP・新しさを加味したリスクスコア</sub>
+</p>
 
 ### プロセス / ファイル関係図
 
 検知のみ / ログ全体を切り替え、プロセスの起動・ファイル作成・ネットワーク接続を表示します。
+関係線やノードをクリックすると、実行ファイル・コマンドライン・接続先をその場で確認できます。
+
+- 検知のみ: ルールにヒットしたプロセスとファイルを追跡
+- ログ全体: 対象 EVTX に含まれるプロセス作成・ファイル作成・接続を丸ごと表示
+- ドラッグ移動、Ctrl + ホイールズーム、検索、フィルタ、SVG / PNG 保存
 
 ---
 
