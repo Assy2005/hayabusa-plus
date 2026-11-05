@@ -25,10 +25,9 @@ Linux・WSL2・オフライン環境で扱う無料の DFIR コンソールで�
 
 <table align="center">
 <tr>
-<td align="center" width="25%"><h3>53</h3><sub>Sigma rules</sub></td>
-<td align="center" width="25%"><h3>269 / 278</h3><sub>sample coverage</sub></td>
-<td align="center" width="25%"><h3>12 / 0</h3><sub>positive / negative fixtures</sub></td>
-<td align="center" width="25%"><h3>0</h3><sub>pip / npm dependencies</sub></td>
+<td align="center" width="33%"><h3>53</h3><sub>Sigma rules</sub></td>
+<td align="center" width="33%"><h3>269 / 278</h3><sub>sample coverage</sub></td>
+<td align="center" width="34%"><h3>0</h3><sub>pip / npm dependencies</sub></td>
 </tr>
 </table>
 
